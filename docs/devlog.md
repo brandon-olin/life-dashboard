@@ -6,9 +6,9 @@ A running record of progress, decisions, and context for the life_dashboard proj
 
 ## What We're Building
 
-life_dashboard is a local-first life-management system for a household. The core idea: all personal data — tasks, goals, calendar, notes, recipes, contacts, habits, grocery lists — lives in a self-hosted Postgres database on a home NAS, never leaving the hardware. A FastAPI backend exposes that data through a clean API. A Next.js web app is the day-to-day interface for the family. And eventually, a local LLM running on a home gaming PC acts as an AI assistant that can reason over the data and take actions — without ever being given raw database access.
+life_dashboard is a local-first, privacy-first life-management system for a household. The core idea: all personal knowledge — notes, journals, tasks, goals, habits, recipes, grocery lists — lives in Logseq as markdown files on a home NAS, never leaving the hardware. A FastAPI backend owns the structured domains that genuinely need a database: contacts, calendar events, auth, and AI indexing. And eventually, a local LLM running on a home gaming PC reasons over the data and takes actions — without ever leaving the network.
 
-This is a privacy-first, household-scale system. Not a SaaS product, not a Home Assistant plugin, not a replacement for any single app — it's a platform that ties all of those things together on hardware you own.
+This is not a SaaS product. It's a personal system designed to run on hardware you own, where you control the data model, the privacy boundaries, and the automation logic.
 
 ---
 
@@ -16,19 +16,19 @@ This is a privacy-first, household-scale system. Not a SaaS product, not a Home 
 
 | Layer | Choice |
 |---|---|
-| Database | Postgres 16 (existing, self-hosted in Docker on Synology NAS) |
+| Knowledge engine | Logseq (markdown files on NAS) |
+| Graph storage | Synology NAS at `/volume1/data/logseq/` |
+| Database | Postgres 16 (self-hosted in Docker on NAS) |
 | Backend language | Python 3.12 |
 | Backend framework | FastAPI |
 | ORM | SQLAlchemy 2.0 (async) |
 | Migrations | Alembic |
-| Validation | Pydantic v2 |
+| Graph indexer | Python + watchdog + asyncpg |
+| Validation / settings | Pydantic v2 |
 | Auth | argon2 + JWT + refresh tokens |
-| Frontend | Next.js (App Router) |
-| Frontend styling | Tailwind + shadcn/ui |
-| Frontend data | TanStack Query + OpenAPI-typed client |
 | Deployment | docker-compose on the NAS |
 | Remote access | Tailscale (no public internet exposure) |
-| AI agent | Local LLM (Ollama / LM Studio) + MCP server |
+| AI agent | Local LLM (Ollama / LM Studio) + MCP server (future) |
 
 ---
 
@@ -37,30 +37,27 @@ This is a privacy-first, household-scale system. Not a SaaS product, not a Home 
 | Phase | Description | Status |
 |---|---|---|
 | 0 | Schema migration: multi-user, audit log, tags, attachments | ✅ Complete |
-| 1 | FastAPI backend: auth, CRUD for all domains, MCP server | 🔜 Next |
-| 2 | Next.js frontend: auth, dashboard, CRUD pages | Not started |
-| 3 | Local AI agent + action vocabulary | Not started |
-| 4 | Home Assistant integration | Future |
-
-**Current position: Phase 1 is complete. Starting Phase 2.**
+| 1 | FastAPI backend: auth, CRUD for all original domains | ✅ Complete |
+| 2 | Logseq pivot: retire domain tables, add graph indexer | ✅ Complete |
+| 3 | Initial Logseq structure + Notion data migration | 🔄 In progress |
+| 4 | MCP server: AI querying over logseq_index | Not started |
+| 5 | Home Assistant integration | Future |
 
 ---
 
 ## Design Considerations
 
+- **Logseq-first.** Notes, tasks, goals, habits, recipes, and grocery lists live in Logseq as plain markdown. Postgres is reserved for the things that genuinely need a relational database: contacts, calendar events, auth, audit, and the AI search index. The UI is Logseq itself — not a bespoke web app built on top of a database.
+
 - **Privacy-first, hardware-owned.** All data lives on the NAS. Remote access is via Tailscale — a personal VPN — not the public internet. Nothing touches a cloud service.
 
-- **Governed AI.** The local LLM agent never speaks SQL. It operates through a fixed vocabulary of structured operations (create a todo, summarize my week, suggest a recipe) with input validation, audit trails, and human approval gates for anything destructive. The AI is powerful but legible.
+- **Graph boundaries.** Three graphs enforce strict privacy: `household` (shared), `brandon-private` (personal), and eventually `partner-private`. No service or output crosses these boundaries without explicit configuration.
 
-- **Composable for open source.** The backend's service layer is deliberately decoupled from FastAPI — it lives in `core/` and imports nothing from the HTTP layer. Both the REST API and the MCP server call into the same `core/`. This means the service layer can be extracted, reused, or contributed to as a standalone library.
+- **Governed AI.** The local LLM agent never speaks SQL or writes files directly. It reads through the `logseq_index` table (a read-only Postgres index of graph content) and writes back through a curated MCP tool vocabulary. The AI is powerful but legible.
 
-- **Home Assistant integration path.** Home Assistant is written in Python. By keeping the backend's service layer as pure Python with no framework dependencies, it's a natural candidate to be wrapped as an HA custom integration later — giving the dashboard access to presence detection, sensor states, and device control without building a separate bridge.
+- **Open format.** Logseq stores everything as plain markdown. Calendar events are iCal-compatible. Contacts are vCard-compatible. No proprietary formats — every piece of data can be read with a text editor.
 
-- **Multi-user from day one.** Every core entity in the database carries `household_id` and `created_by_user_id`. It's a single-household system (not multi-tenant SaaS), but it's designed for multiple humans in that household. Adding family members later requires no schema changes.
-
-- **Open format interop.** Calendar events are iCal-compatible. Contacts are vCard-compatible. Notes are markdown. This keeps doors open: a future CalDAV/CardDAV sync, an HA calendar widget, or a mobile calendar app could all consume the data without lock-in.
-
-- **Audit everything.** Every write through the backend produces an `audit_log` row with a structured diff and the actor's identity. This matters especially once the AI agent is in the loop — you can always see what it did and why.
+- **Audit everything.** Every write through the backend produces an `audit_log` row with actor identity and a structured diff. When the AI agent is in the loop, there's always a record of what it did and why.
 
 ---
 
@@ -90,6 +87,8 @@ The migration SQL was written by hand and validated with `pglast` (Postgres's re
 
 Getting the monorepo from the development Mac to the NAS required a few detours: `git` isn't installed on Synology DSM by default, rsync over SSH was blocked by DSM's SSH configuration, and the destination directory needed to exist before transfer. The eventual solution was piping `tar` through SSH — a reliable fallback that bypasses rsync's server-mode requirement entirely.
 
+---
+
 ### Phase 1 — FastAPI Backend (Complete)
 
 Phase 1 was the largest single chunk of work in the project so far — going from a database with no application layer to a fully deployed, smoke-tested REST API running in Docker on the NAS.
@@ -104,7 +103,7 @@ The notes domain became the reference implementation — it's the most complex, 
 
 **The hard-won lessons:**
 
-Several of these bit during development and are worth understanding because they'll surface again in Phase 2 and beyond.
+Several of these bit during development and are worth understanding because they'll surface again later.
 
 The async SQLAlchemy constraint that caused the most friction was `lazy="noload"` on relationships. In an async context, SQLAlchemy raises `MissingGreenlet` the moment you touch a relationship attribute that hasn't been explicitly loaded — including when Pydantic calls `model_validate()` on an ORM object. The fix is to declare every relationship as `lazy="noload"` and load related data manually via bulk queries before building the response. The `_enrich()` pattern in the notes service is the canonical example: load the main objects, then fetch tags, children, links, and backlinks in separate `SELECT ... WHERE id IN (...)` queries, then inject them via `model_copy()`.
 
@@ -116,8 +115,6 @@ The `metadata` naming collision was a one-time surprise: SQLAlchemy's `Declarati
 
 **Deployment stumbling blocks:**
 
-Getting the backend running on the NAS surfaced a set of Synology-specific quirks that are now documented in CLAUDE.md so they don't need to be rediscovered.
-
 The Docker network was the trickiest: the `postgres-1` container lives on a manually-created Docker network (`docker network create life-dashboard`). Docker Compose refuses to adopt a manually-created network unless you declare it `external: true` in the compose file — without that flag it tries to create its own network with the same name, fails because it already exists, and errors out with a confusing message.
 
 Alembic's migration files and `alembic.ini` are not part of the installed Python package — they're plain files on disk. The Dockerfile initially only copied `src/`. Running migrations inside the container failed immediately with `No 'script_location' key found in configuration` until those two explicit `COPY` directives were added to the runtime stage.
@@ -128,14 +125,68 @@ One last one that caused twenty minutes of confusion: `GID` is a read-only speci
 
 ---
 
+### Phase 2 — Logseq Pivot + Graph Indexer (Complete)
+
+**The decision:**
+
+After Phase 1 shipped a working CRUD backend for every domain, it became clear that building and maintaining a custom data model, API, and UI for notes, tasks, goals, habits, recipes, and grocery lists was solving a problem that Logseq already solves better. Logseq provides linking, queries, templates, tagging, journaling, and a plugin system — all for free, in plain markdown files. The original architecture was reinventing it as a bespoke web app.
+
+The pivot: Logseq becomes the primary UI and source of truth for all personal knowledge. Postgres keeps only the domains that genuinely need a relational database — contacts, calendar events, auth, audit, tags, and attachments. A new `logseq_index` table gives the future AI agent a queryable, full-text-searchable window into the Logseq graphs without ever writing to them directly.
+
+**What was retired (migration 0004):**
+
+Eleven tables were dropped: `note_links`, `notes`, `habit_occurrences`, `habits`, `grocery_items`, `recipe_steps`, `recipe_ingredients`, `grocery_lists`, `recipes`, `todos`, and `goals`. The `note_type` and `priority_level` Postgres enums went with them.
+
+A non-obvious FK dependency bit during the migration: `calendar_events` carried `todo_id` and `goal_id` columns referencing the retired tables. These had to be dropped from `calendar_events` before `todos` and `goals` could be removed. The lesson: when retiring tables, always check whether *kept* tables have FKs pointing *into* the retired set, not just the other direction.
+
+Six domain directories were deleted from the FastAPI codebase (`notes/`, `goals/`, `todos/`, `habits/`, `recipes/`, `grocery_lists/`), and their router imports removed from `main.py` and `env.py`. The downgrade for this migration is intentionally a no-op — data cannot be recovered from a DROP without a database backup.
+
+**What was added (migration 0005):**
+
+A new `logseq_index` table stores one row per Logseq page: graph name, page name, file path, full markdown content, parsed page properties (JSONB), tags (text array), block count, and a SHA-256 content hash for change detection. Indexes: unique on `(graph, page_name)`, btree on `graph`, GIN on `tags`, and a functional GIN on `to_tsvector('english', content)` for full-text search.
+
+**Logseq setup on the NAS:**
+
+Both graphs were scaffolded at `/volume1/data/logseq/household-graph/` and `/volume1/data/logseq/brandon-private/` using a setup script (`infra/logseq/setup-nas.sh`) that SSHes in to create the directory structure and deploy `logseq/config.edn`. Each graph is configured for markdown format, with triple-lowbar file naming (`Projects___My Plan.md` → page name `Projects/My Plan`) to keep the `pages/` directory flat. The graphs are exposed to the Mac via an SMB share on the NAS and mounted at `/Volumes/data/logseq/`.
+
+**Graph indexer service:**
+
+The indexer (`api/src/life_dashboard/indexer/`) is a Python async service that:
+1. On startup, walks each graph's `pages/` and `journals/` directories, parses each `.md` file, and upserts the result into `logseq_index`. Rows whose `content_hash` hasn't changed are skipped at the Postgres level (`WHERE content_hash IS DISTINCT FROM EXCLUDED.content_hash`).
+2. Starts a `watchdog` filesystem observer for each graph root, bridging file events into an `asyncio.Queue`.
+3. Processes the queue: `on_created`/`on_modified` trigger a parse + upsert; `on_deleted` removes the row; `on_moved` handles renames atomically.
+
+The indexer reuses the same Docker image as the API (same `pyproject.toml` dependencies, same Python package) but runs with a different `command`. The `logseq_index` upsert is the only Postgres write path; the graph files themselves are mounted read-only.
+
+Parser logic: Logseq property drawers (`key:: value` lines at the top of the file) are parsed into the `properties` JSONB column. Tags are extracted from the `tags::` property and from inline `#tag` syntax, deduplicated with property tags taking precedence. Journal files (`journals/2024_01_15.md`) are stored with page names like `journals/2024-01-15`.
+
+**Hard-won lessons:**
+
+**Git on Synology.** Git is not installed by default on Synology DSM. Install the `Git Server` package from Package Center. Until this is done, the only reliable way to get files onto the NAS is `tar` piped over SSH:
+```bash
+tar -czf - path/to/files | ssh user@nas "cd /dest && tar -xzf -"
+```
+
+**`scp` fails on Synology.** Synology's SSH server does not expose the SFTP subsystem by default. Modern `scp` defaults to SFTP and fails with `subsystem request failed on channel 0`. Two workarounds: use `scp -O` (legacy protocol mode) or use `ssh "cat > remotefile" < localfile`. The latter is the more reliable fallback.
+
+**Git `core.fileMode` and `core.autocrlf` on Synology.** After cloning or resetting the repo on the NAS, `git status` shows every file as modified even with an up-to-date working tree. The cause is Synology's filesystem storing executable bits on files that git tracks as non-executable (`644` vs `755`). Fix: `git config core.fileMode false`. A related issue is `core.autocrlf` defaulting to `true` on some setups, causing git to see CRLF/LF differences on every file. Fix: `git config core.autocrlf false`. Both should be set in the NAS repo after initial clone.
+
+**Docker COPY file ownership.** Files copied into a Docker image with `COPY` land owned by root. If the container subsequently runs as a non-root user (`USER appuser`), those files are unreadable — Alembic fails with `PermissionError` when trying to read `migrations/env.py`. The fix is to use `--chown=appuser:appuser` on every `COPY` directive in the runtime stage.
+
+**Synology ACL permissions and Docker containers.** Synology shared folders use ACL-based permissions that don't map to standard Unix UIDs inside Docker containers. A non-root container user (`appuser`) cannot read a shared folder even if the folder has `755` permissions, because the Synology ACL gates access at a layer above standard Unix permissions. The indexer service runs as `root` to work around this. The volume is mounted `:ro`, so the container cannot modify graph files regardless.
+
+**Merge state on the NAS.** When the NAS repo ended up in a broken merge state (failed `git merge --abort` due to an unstaged file), the escape hatch was `git reset --hard ORIG_HEAD`. `ORIG_HEAD` is set by git before any merge and points to the clean pre-merge commit. `--hard` overrides unstaged changes that would otherwise block the reset. For persistent dirty-status issues after reset, `git fetch origin && git reset --hard origin/main` is the nuclear option that forces the working tree to exactly match the remote.
+
+---
+
 ## Forward-Looking Architecture Decisions
 
-**Python + FastAPI** is the right choice beyond just being familiar. Python has the richest LLM and AI agent ecosystem — LangChain, LlamaIndex, the official Anthropic and OpenAI SDKs, and the MCP SDK all speak Python natively. Home Assistant is also Python, meaning the service layer can eventually be wrapped as a custom integration with minimal friction.
+**Logseq as the UI layer.** The original plan was a Next.js web app as the day-to-day interface. With the Logseq pivot, Logseq itself is the UI. Custom interfaces are only needed where Logseq's native query system and plugin ecosystem cannot reach. This dramatically reduces the amount of code to build and maintain.
 
-**The service layer split** (`core/` vs `api/`) is the most consequential architectural decision in the project. By keeping all business logic in a FastAPI-free layer, three consumers can share it without duplication: the HTTP REST API, the MCP server (which the local LLM calls), and any future HA integration. This also makes the service layer independently testable.
+**`logseq_index` as the AI's read interface.** The local LLM never reads raw markdown files and never writes to the graph. It reads `logseq_index` via the MCP server — a table with full-text search, tag filtering, and per-graph scoping. This is the governed AI principle in practice: the AI has a well-defined, read-only window into the knowledge base, not open file access.
 
-**MCP (Model Context Protocol)** is the bridge between the local LLM and the backend. Instead of giving the AI a database connection and hoping for the best, the MCP server exposes a curated set of typed tools — "create a todo," "list habits due this week," "log a habit occurrence." The LLM calls tools; it never writes SQL. This is what makes the AI assistant safe to run on household data.
+**Python + FastAPI.** Still the right choice. Python has the richest LLM and AI agent ecosystem — the official Anthropic and OpenAI SDKs, the MCP SDK, LangChain, LlamaIndex — and Home Assistant is also Python, meaning the service layer can eventually be wrapped as a custom integration with minimal friction.
 
-**Async SQLAlchemy** is more setup than the sync version but pays off when the AI agent is making multiple concurrent reads (summarizing goals while fetching upcoming calendar events while checking habit streaks). It also positions the backend well if a mobile app or real-time frontend feature ever needs WebSocket support.
+**The service layer split.** The backend's service layer imports nothing from FastAPI. Both the REST API and the future MCP server call into the same service layer. This remains the most consequential architectural decision in the project.
 
-**Tailscale over a public server** means there's no attack surface to maintain, no TLS certificate management beyond a single Caddy config, and no monthly VPS bill. The family accesses the dashboard by URL on their phones, exactly like any web app — they just happen to be on a private network.
+**Tailscale over a public server.** No attack surface to maintain, no TLS certificate management beyond a single Caddy config, no monthly VPS bill. The family accesses the dashboard by URL on their phones, exactly like any web app — they just happen to be on a private network.

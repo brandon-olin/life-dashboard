@@ -2,121 +2,169 @@
 
 ## Principles
 
-1. **Local-first.** Every piece of household data lives on hardware
-   Brandon owns. No third-party cloud sees the contents of this
-   database. Remote access is via Tailscale, not the public internet.
-2. **Governed AI.** The LLM never speaks SQL. It interacts with the
-   data through a fixed vocabulary of backend operations that validate,
-   authorize, and audit every write.
-3. **Extensible.** New domains (garden, orchard, home projects, travel)
-   are added as modules in the backend's `domains/` directory. The
-   action vocabulary grows with them.
-4. **Interop-friendly.** The data model speaks standard formats:
-   iCal-compatible calendar, vCard-compatible contacts, markdown for
-   notes. This keeps door open to Home Assistant integration, CalDAV/
-   CardDAV sync, or porting pieces elsewhere.
+1. **Local-first.** Every piece of household data lives on hardware Brandon owns. No third-party cloud sees any of it. Remote access is via Tailscale — a personal VPN — not the public internet.
+2. **Logseq-first.** Notes, tasks, goals, habits, recipes, and grocery lists live in Logseq as plain markdown files. The Logseq UI itself is the day-to-day interface. Custom software is only built where Logseq cannot reach.
+3. **Governed AI.** The local LLM never reads raw markdown files and never writes to the graph. It reads through `logseq_index` (a Postgres table that mirrors graph content) and writes back through a curated MCP tool vocabulary. Powerful but auditable.
+4. **Open formats.** Logseq stores everything as plain markdown. Calendar events are iCal-compatible. Contacts are vCard-compatible. No proprietary formats — every piece of data can be read with a text editor and migrated without vendor permission.
+5. **Audit everything.** Every write through the backend produces an `audit_log` row with actor identity and a structured diff. When the AI is in the loop, there is always a record of what it did and why.
+
+---
+
+## Data Ownership
+
+Two systems own data. The boundary is strict.
+
+| Domain | Owner | Why |
+|---|---|---|
+| Notes, journals, tasks, goals, habits, recipes, grocery lists | **Logseq** (markdown files on NAS) | Logseq's query, linking, and templating system handles these better than a custom CRUD app |
+| Contacts | **Postgres** | Relational structure, household sharing, vCard compatibility |
+| Calendar events | **Postgres** | Structured queries, recurrence, iCal compatibility |
+| Auth, households, users | **Postgres** | Relational, security-sensitive |
+| Audit log | **Postgres** | Append-only, structured diffs |
+| Tags, attachments | **Postgres** | Normalized, cross-entity |
+| AI search index | **Postgres** (`logseq_index`) | Enables FTS and agent querying without touching raw files |
+
+---
+
+## Graph Boundaries
+
+Three Logseq graphs enforce strict privacy:
+
+| Graph | Purpose | Who sees it |
+|---|---|---|
+| `household` | Shared household knowledge: shared tasks, grocery, meal plans, home projects | All household members |
+| `brandon-private` | Personal notes, journal, personal goals | Brandon only |
+| `partner-private` (future) | Partner's personal notes and journal | Partner only |
+
+No service, output, or AI query crosses graph boundaries without explicit configuration.
+
+---
 
 ## Components
 
-### Database (NAS, existing)
-Postgres 16 in the `postgres-1` container, database `life_dashboard`,
-owner `brandon`. Phase-0 migration adds users, households, audit, tags,
-attachments and retrofits ownership on existing entities.
+### Logseq (primary UI)
 
-### Backend (NAS, Phase 1)
-FastAPI + SQLAlchemy 2.0 async + Alembic. Deployed as a Docker container
-on the same internal network as `postgres-1`. Talks to the DB over the
-container network — the DB is never exposed to the LAN.
+Logseq runs on each user's machine and opens graphs from the NAS via SMB mount. It is the day-to-day writing, tasking, and organizational interface. No custom frontend is built for any domain that Logseq handles.
+
+Graphs live on the NAS at `/volume1/data/logseq/`:
+- `household-graph/` — shared household graph
+- `brandon-private/` — Brandon's personal graph
+
+Both use markdown format with triple-lowbar file naming (e.g., `Projects___My Plan.md` stores page `Projects/My Plan`).
+
+### Database (NAS, `postgres-1` container)
+
+Postgres 16 in the `postgres-1` container, database `life_dashboard`, owner `brandon`. Holds the structured domains (contacts, calendar, auth, audit, tags, logseq_index). Never exposed to the LAN — only reachable from the `life-dashboard` Docker network.
+
+### Backend API (NAS, `infra-api-1` container)
+
+FastAPI + SQLAlchemy 2.0 async + Alembic. Handles auth, contacts, calendar events, and tags. Deployed as a Docker container on the `life-dashboard` network alongside `postgres-1`.
 
 Internal structure:
 
 ```
 api/src/life_dashboard/
-├── core/      # Pure service layer, no FastAPI. Business logic lives here.
-├── domains/   # One module per domain (goals, todos, habits, ...)
-├── auth/      # argon2 password hashing, JWT, refresh tokens
-├── audit/     # Middleware + repository writing every write to audit_log
-├── events/    # In-process event bus; MQTT emitter added in Phase 4
-├── mcp/       # MCP server wrapping core/ as tools for the LLM
-└── api/       # FastAPI routers — thin HTTP wrappers over core/
+├── core/           # Settings, DB session
+├── domains/
+│   ├── auth/       # argon2 password hashing, JWT, refresh tokens
+│   ├── calendar_events/
+│   ├── contacts/
+│   └── tags/
+└── indexer/        # Graph indexer service (runs as a separate container)
 ```
 
-The `core/` layer imports nothing from `api/` or `mcp/`. Routers and
-MCP tools both call into `core/`. This is the seam that makes the
-service layer extractable as an HA custom integration later.
+The service layer (`domains/*/service.py`) imports nothing from FastAPI. Both the REST API and the future MCP server call into the same service layer.
 
-### Frontend (NAS, Phase 2)
-Next.js App Router on the same docker-compose network as the backend.
-Server Components fetch from the backend using a typed OpenAPI client
-generated at build time. Writes go through TanStack Query mutations.
+### Graph Indexer (NAS, `infra-indexer-1` container)
 
-### Local agent (gaming PC, Phase 3)
-A small Python program that:
-- Discovers the backend's MCP server (URL configured via env).
-- Runs a local LLM (llama.cpp / Ollama / LM Studio).
-- Takes user prompts, plans actions, calls MCP tools.
-- Respects the permission model: read freely, write with audit,
-  destructive/bulk ops emit approval requests that surface in the UI.
+A Python async service that keeps `logseq_index` in sync with the Logseq graph files.
 
-### Home Assistant integration (future, Phase 4)
-MQTT emitter in the backend's `events/` module publishes topics like
-`life_dashboard/todos/created`. A custom HA integration (Python) listens,
-exposes entities, and can trigger automations. Bidirectional: HA
-automations can call backend endpoints to create tasks / log events.
+**On startup:** Walks each graph's `pages/` and `journals/` directories. Parses each `.md` file (extracts page properties, tags, block count, content hash). Upserts into `logseq_index`. Rows unchanged since last index are skipped at the Postgres level via `WHERE content_hash IS DISTINCT FROM EXCLUDED.content_hash`. Orphaned rows (files deleted since last run) are removed via reconcile.
 
-## Network topology
+**After startup:** Watchdog filesystem observer watches each graph root. File create/modify events trigger parse + upsert. Delete events remove the row. Move events are handled atomically (delete old path, upsert new path). File events are bridged from the watchdog thread into an asyncio queue.
+
+The indexer runs in the same Docker image as the API but with a different `command`. It runs as `root` because Synology shared folders use ACL-based permissions that don't map to container UIDs — non-root containers cannot read the graphs even with `755` Unix permissions. The volume is mounted `:ro` so the container cannot modify graph files regardless.
+
+### `logseq_index` Table
+
+The AI's read window into the Logseq graphs. Schema:
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `graph` | text | Graph name (e.g., `household`, `brandon-private`) |
+| `page_name` | text | Page name as shown in Logseq (e.g., `Projects/My Plan`, `journals/2024-01-15`) |
+| `file_path` | text | Absolute path to the source `.md` file on the NAS |
+| `content` | text | Full markdown content of the page |
+| `properties` | JSONB | Parsed Logseq property drawer (`key:: value` pairs) |
+| `tags` | text[] | Tags from `tags::` property + inline `#tag` syntax, deduplicated |
+| `block_count` | integer | Count of lines matching `^\s*-\s` |
+| `content_hash` | text | SHA-256 of content, used for change detection |
+| `last_indexed_at` | timestamptz | When this row was last updated |
+| `created_at` | timestamptz | — |
+| `updated_at` | timestamptz | — |
+
+Indexes: unique on `(graph, page_name)`, btree on `graph`, GIN on `tags`, functional GIN on `to_tsvector('english', content)` for full-text search.
+
+### Caddy (NAS, `infra-caddy-1` container)
+
+TLS termination and reverse proxy. Serves `https://YOUR_NAS.tailnet-name.ts.net`. Certificates are issued by Tailscale and stored at `/var/packages/Tailscale/var/certs/`.
+
+### Local LLM (gaming PC, future — Phase 4)
+
+Ollama or LM Studio running on the gaming PC on the same Tailscale network. The MCP server (to be built in Phase 4) will expose the `logseq_index` to the LLM via a curated tool vocabulary. The LLM reads through `logseq_index` and writes back through MCP tools — never directly to the graph files or Postgres.
+
+---
+
+## Network Topology
 
 ```
-[ Family phones / laptops ]
+[ Mac / phones / laptops ]
            |
            | Tailscale
            |
-[ NAS ] ------ docker network ------+
-  |                                  |
-  |-- life-dashboard-web (Next.js)  |
-  |-- life-dashboard-api (FastAPI) -+
-  |-- postgres-1 ---------------- -+
-  |-- caddy (TLS terminator)
+   [ NAS (192.168.68.58) ]
+           |
+     Docker network: life-dashboard
+           |
+     +-----+---------------------------+
+     |                                 |
+  infra-api-1 (FastAPI :8000)     postgres-1 (Postgres :5432)
+  infra-indexer-1 (indexer)
+  infra-caddy-1 (Caddy :80/:443)
+           |
+     Logseq graphs (SMB share)
+           |
+     /volume1/data/logseq/
+       household-graph/
+       brandon-private/
 
-[ Gaming PC ] --Tailscale--> [ life-dashboard-api MCP endpoint ]
-  |
-  |-- local LLM (llama.cpp / Ollama)
-  |-- agent/ (Python)
+[ Gaming PC ] --Tailscale--> [ infra-api-1 MCP endpoint (future) ]
+     |
+     +-- Local LLM (Ollama / LM Studio)
 ```
 
-## Permission model (sketch)
+---
+
+## Permission Model
 
 Three actor types: `user`, `agent`, `system`.
 
-- **user**: authenticated human with a household membership.
-  Role determines what they can do (owner/admin/member/viewer/agent).
-- **agent**: the local LLM, identified by an agent user record
-  (`is_agent = true`). Scoped by what's allowed in its permissions.
+- **user**: authenticated human with a household membership. Role determines what they can do (owner/admin/member/viewer).
+- **agent**: the local LLM, identified by an agent user record (`is_agent = true`). Reads `logseq_index` freely; writes only through MCP tools, never directly.
 - **system**: automated jobs, migrations, imports.
 
 Every write through the backend:
 1. Authenticates the actor and resolves their household.
 2. Validates the payload.
-3. Checks authorization (can this actor do this op in this household?).
+3. Checks authorization.
 4. Executes in a transaction.
-5. Writes an `audit_log` row with a structured `diff`.
-6. Emits an event to the in-process bus.
+5. Writes an `audit_log` row with a structured diff.
 
-Destructive or bulk operations (delete-many, update-many, bulk import)
-require a higher role and/or return a "proposed change" that must be
-approved by a user before execution.
+---
 
-## Data integrity notes
+## What Was Retired
 
-- Child tables (contact_addresses, grocery_items, recipe_ingredients,
-  recipe_steps, habit_occurrences) do not carry `household_id` — they
-  inherit from their parent and cascade on parent delete.
-- The `notes` table has three parallel nullable FK columns
-  (`goal_id`, `todo_id`, `contact_id`). If we need notes on more entity
-  types, we'll migrate to a polymorphic `note_links` table rather than
-  adding more columns.
-- Tags exist in two places: legacy `text[]` on `notes.tags` and
-  `recipes.tags`, plus the new normalized `tags` + `taggings` tables.
-  The migration does not touch the legacy columns. Phase 2 or later
-  will migrate legacy tags into the normalized form and drop the old
-  columns.
+Phase 2 dropped eleven database tables that Logseq now handles natively: `notes`, `note_links`, `goals`, `todos`, `habits`, `habit_occurrences`, `recipes`, `recipe_ingredients`, `recipe_steps`, `grocery_lists`, `grocery_items`. The `note_type` and `priority_level` Postgres enums went with them.
+
+The corresponding FastAPI domain modules (`notes/`, `goals/`, `todos/`, `habits/`, `recipes/`, `grocery_lists/`) were deleted from the codebase in the same phase.
