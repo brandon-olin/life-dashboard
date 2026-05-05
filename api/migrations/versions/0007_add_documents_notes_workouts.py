@@ -60,15 +60,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # ── Enums ─────────────────────────────────────────────────────────────────
-    op.execute("CREATE TYPE document_kind AS ENUM ('page', 'template')")
-    op.execute("CREATE TYPE note_kind AS ENUM ('note', 'journal')")
-    op.execute(
-        "CREATE TYPE exercise_type AS ENUM "
-        "('strength', 'cardio', 'hiit', 'flexibility', 'other')"
-    )
-
     # ── documents ─────────────────────────────────────────────────────────────
+    # document_kind, note_kind, and exercise_type enums are owned by their
+    # respective table columns below (create_type=True). Using op.execute to
+    # pre-create types and create_type=False causes _on_table_create to fire
+    # again on the column regardless, producing a duplicate-type error.
     op.create_table(
         "documents",
         sa.Column(
@@ -92,7 +88,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "kind",
-            sa.Enum("page", "template", name="document_kind", create_type=False),
+            sa.Enum("page", "template", name="document_kind", create_type=True),
             nullable=False,
             server_default="page",
         ),
@@ -133,7 +129,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "kind",
-            sa.Enum("note", "journal", name="note_kind", create_type=False),
+            sa.Enum("note", "journal", name="note_kind", create_type=True),
             nullable=False,
             server_default="note",
         ),
@@ -240,7 +236,7 @@ def upgrade() -> None:
             "type",
             sa.Enum(
                 "strength", "cardio", "hiit", "flexibility", "other",
-                name="exercise_type", create_type=False,
+                name="exercise_type", create_type=True,
             ),
             nullable=False,
         ),
