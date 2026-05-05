@@ -1,414 +1,248 @@
-# life_dashboard — Runbook
+# Runbook — life-dashboard (Self-Hosted)
 
-Operational procedures for deploying, upgrading, and troubleshooting the life_dashboard system. Written for Brandon's NAS (Synology + Docker + existing `postgres-1` container).
+Operational reference for deploying and maintaining life-dashboard on self-hosted infrastructure.
 
-All `docker` and `docker compose` commands require `sudo` on Synology.
-
-The repo on the NAS lives at `/volume1/docker/life-dashboard/`.
+> **Local-only mode** (no server required) is planned for Phase 3. This runbook covers the self-hosted Postgres path that is active today.
 
 ---
 
-## Table of Contents
+## Prerequisites
 
-- [Synology Gotchas](#synology-gotchas)
-- [Phase 0 — Schema Migration 0001](#phase-0--schema-migration-0001)
-- [Phase 1 — Initial API Deployment](#phase-1--initial-api-deployment)
-- [Phase 2 — Logseq Setup and Indexer](#phase-2--logseq-setup-and-indexer)
-- [Ongoing Operations](#ongoing-operations)
-- [Troubleshooting](#troubleshooting)
+| Requirement | Notes |
+|---|---|
+| Docker + Docker Compose | Compose v2 (`docker compose`) recommended |
+| Postgres 15+ | Can be a container or a managed instance |
+| Python 3.12 | Only needed if running the API outside Docker |
+| Node 20+ | Only needed if building the frontend outside Docker |
 
 ---
 
-## Synology Gotchas
+## Repository layout
 
-These are not obvious and will bite you again. Read before doing anything.
-
-**Git is not installed by default.** Install the `Git Server` package from Package Center before trying to clone or pull on the NAS. Without it, git commands fail with `command not found`.
-
-**`scp` fails on Synology.** Synology's SSH server does not expose the SFTP subsystem by default. Modern `scp` defaults to SFTP protocol and fails with `subsystem request failed on channel 0`. Use `scp -O` (legacy protocol mode) or avoid scp entirely and use git.
-
-**`git status` shows every file as modified after a fresh clone.** Synology's filesystem stores executable bits differently. Git sees `old mode 100644 / new mode 100755` for every file. Fix immediately after cloning:
-```bash
-git config core.fileMode false
-git config core.autocrlf false
 ```
-
-**All docker commands require `sudo`.** The Synology system user is not in the `docker` group. Every `docker` and `docker compose` command on the NAS needs `sudo`.
-
-**`docker compose` looks for `docker-compose.yml` in the current directory.** The compose file is in `infra/`, not the repo root. Always run:
-```bash
-cd /volume1/docker/life-dashboard
-sudo docker compose -f infra/docker-compose.yml <command>
-```
-Or `cd infra/` first and run `sudo docker compose <command>` from there.
-
-**`docker compose run --rm` does not rebuild the image.** After updating the Dockerfile or source code, always run `sudo docker compose build api` explicitly before `docker compose run` or `docker compose up`.
-
-**Non-root containers cannot read Synology shared folders.** Synology shared folders use ACL-based permissions that don't map to standard Unix UIDs inside Docker containers. Even `755` Unix permissions are not enough. Services that need to read graph files (like the indexer) must run as `user: root`. The `:ro` mount flag prevents writes.
-
-**`GID` is a reserved variable in zsh.** Don't use it as a shell variable name. Pick anything else.
-
----
-
-## Phase 0 — Schema Migration 0001
-
-> **Status: Complete.** This section is historical reference. Do not re-run.
-
-Migration 0001 added multi-user support, audit log, tags, attachments, and retrofitted ownership columns on all existing entities. It was applied manually via `docker cp` + `psql`.
-
-### Rollback (restore from backup, if ever needed)
-
-The backup taken before Phase 0 is in `backups/`. To restore:
-
-```bash
-sudo docker exec -i postgres-1 dropdb -U brandon life_dashboard
-sudo docker exec -i postgres-1 createdb -U brandon life_dashboard
-sudo docker exec -i postgres-1 pg_restore -U brandon -d life_dashboard \
-    < backups/life_dashboard_YYYYMMDD_HHMMSS.dump
+life-dashboard/
+├── api/                # FastAPI backend
+├── web/                # Next.js frontend
+├── agent/              # AI/automation tooling (Phase 4)
+├── infra/              # Docker Compose and Caddy config
+│   ├── docker-compose.yml
+│   ├── .env.example
+│   └── caddy/
+│       └── Caddyfile
+└── api/migrations/     # Alembic migration files
 ```
 
 ---
 
-## Phase 1 — Initial API Deployment
+## First-time setup
 
-> **Status: Complete.** This section covers the one-time setup steps. For ongoing deployments, see [Ongoing Operations](#ongoing-operations).
-
-### Prerequisites
-
-- Phase 0 migration applied.
-- Git installed on the NAS (`Git Server` package from Package Center).
-- Tailscale installed and authenticated on the NAS.
-- The `life-dashboard` Docker network exists and `postgres-1` is connected to it.
-
-### One-time: Connect postgres-1 to the Docker network
+### 1. Configure environment
 
 ```bash
-sudo docker network create life-dashboard 2>/dev/null || true
-sudo docker network connect life-dashboard postgres-1
+cp infra/.env.example infra/.env
 ```
 
-This command is idempotent — safe to re-run.
+Edit `infra/.env` with your values:
 
-### One-time: Clone the repo to the NAS
+```
+DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@HOST:PORT/life_dashboard
+BOOTSTRAP_PASSWORD=choose-a-strong-password
+SECRET_KEY=generate-with-openssl-rand-hex-32
+```
+
+Generate a secret key:
 
 ```bash
-cd /volume1/docker
-git clone https://github.com/YOUR_USERNAME/life-dashboard.git
-cd life-dashboard
-git config core.fileMode false
-git config core.autocrlf false
+openssl rand -hex 32
 ```
 
-### One-time: Create the environment file
+### 2. Start services
 
 ```bash
-cd /volume1/docker/life-dashboard/infra
-cp .env.example .env
-vi .env   # fill in DATABASE_URL password, JWT_SECRET_KEY, BOOTSTRAP_PASSWORD, ALLOWED_ORIGINS
+cd infra
+docker compose up -d
 ```
 
-### One-time: Update the Caddyfile
-
-Replace `YOUR_NAS.tailnet-name.ts.net` with your actual Tailscale hostname in `infra/caddy/Caddyfile`.
-
-### One-time: Obtain a Tailscale TLS certificate
+### 3. Run migrations
 
 ```bash
-sudo tailscale cert YOUR_NAS.tailnet-name.ts.net
+docker compose exec api alembic upgrade head
 ```
 
-The cert and key land in `/var/packages/Tailscale/var/certs/`. Verify:
-```bash
-ls -la /var/packages/Tailscale/var/certs/
-```
+The first startup seeds a default user account. On first login, set your password using `BOOTSTRAP_PASSWORD` from `.env`.
 
-### One-time: Run Alembic migrations
+### 4. Verify
 
 ```bash
-cd /volume1/docker/life-dashboard
-sudo docker compose -f infra/docker-compose.yml build api
-sudo docker compose -f infra/docker-compose.yml run --rm api \
-    alembic -c /app/alembic.ini upgrade head
+# API health check
+curl http://localhost:8000/health
+
+# View logs
+docker compose logs -f api
+docker compose logs -f web
 ```
-
-### One-time: Start all services
-
-```bash
-sudo docker compose -f infra/docker-compose.yml up -d
-```
-
-### Verify API is healthy
-
-```bash
-sudo docker compose -f infra/docker-compose.yml ps
-curl -s http://localhost:8000/health | python3 -m json.tool
-```
-
-Expected health response: `{"status":"ok","database":"reachable"}`.
-
-The first startup triggers the bootstrap flow: the backend detects the sentinel `!` password hash, hashes `BOOTSTRAP_PASSWORD` with argon2, writes it to the DB, and logs `Bootstrap complete`. After that, clear `BOOTSTRAP_PASSWORD` from `.env`.
 
 ---
 
-## Phase 2 — Logseq Setup and Indexer
+## Migrations
 
-> **Status: Complete.** This section documents the setup and is the reference for re-running or troubleshooting.
-
-### Logseq graph directories on the NAS
-
-Both graphs live at:
-- `/volume1/data/logseq/household-graph/` — shared household graph
-- `/volume1/data/logseq/brandon-private/` — Brandon's personal graph
-
-Each graph has this directory structure:
-```
-household-graph/
-├── pages/
-├── journals/
-├── assets/
-└── logseq/
-    ├── bak/
-    ├── version-files/
-    └── config.edn
-```
-
-To recreate from scratch, run the setup script from the Mac:
-```bash
-cd /Users/brandonolin/Code/Personal/life-dashboard
-./infra/logseq/setup-nas.sh
-```
-
-The script SSHes into the NAS and creates the directory structure and deploys `config.edn` for both graphs. It uses `ssh "cat > /remote/path" < localfile` (not `scp`) because Synology SSH doesn't expose SFTP.
-
-### Opening graphs in Logseq (Mac)
-
-The NAS graphs are exposed via SMB share. The share is mounted at `/Volumes/data/logseq/` on the Mac.
-
-To open a graph in Logseq:
-1. Open Logseq → Add Graph → select `/Volumes/data/logseq/household-graph/` or `/Volumes/data/logseq/brandon-private/`
-
-If the share isn't mounted: `Finder → Go → Connect to Server → smb://192.168.68.58/data`
-
-### Indexer service
-
-The indexer runs as `infra-indexer-1`. It starts automatically with `docker compose up -d`.
-
-Check indexer status:
-```bash
-sudo docker compose -f infra/docker-compose.yml ps indexer
-sudo docker compose -f infra/docker-compose.yml logs -f indexer
-```
-
-Normal startup output:
-```
-connected to database
-scanning household at /data/logseq/household-graph
-scan complete: household — N page(s) indexed
-scanning brandon-private at /data/logseq/brandon-private
-scan complete: brandon-private — N page(s) indexed
-watching 2 graph(s) for changes
-```
-
-After startup, any `.md` file change in either graph produces a log line like:
-```
-indexed  household :: Projects/My Plan
-```
-
-### Verify logseq_index content
+Alembic manages all schema changes. Never modify the database schema by hand.
 
 ```bash
-sudo docker exec postgres-1 psql -U brandon -d life_dashboard \
-    -c "SELECT graph, count(*) FROM logseq_index GROUP BY graph;"
+# Apply all pending migrations
+docker compose exec api alembic upgrade head
+
+# Check current migration state
+docker compose exec api alembic current
+
+# View migration history
+docker compose exec api alembic history
+
+# Roll back one migration
+docker compose exec api alembic downgrade -1
 ```
 
-To search the index:
-```sql
-SELECT graph, page_name, tags
-FROM logseq_index
-WHERE to_tsvector('english', content) @@ plainto_tsquery('english', 'your search term');
+To create a new migration after changing an ORM model:
+
+```bash
+docker compose exec api alembic revision --autogenerate -m "describe the change"
 ```
 
-### Add a new graph
-
-1. Create the directory structure on the NAS (copy the pattern from `setup-nas.sh`).
-2. Deploy a `config.edn` with the same settings as the existing graphs.
-3. Add the new graph to `LOGSEQ_GRAPHS` in `infra/.env`:
-   ```
-   LOGSEQ_GRAPHS=household:/data/logseq/household-graph,brandon-private:/data/logseq/brandon-private,new-graph:/data/logseq/new-graph
-   ```
-4. Add a new volume mount in `infra/docker-compose.yml` under the indexer service:
-   ```yaml
-   - /volume1/data/logseq/new-graph:/data/logseq/new-graph:ro
-   ```
-5. Restart the indexer:
-   ```bash
-   sudo docker compose -f infra/docker-compose.yml up -d indexer
-   ```
+Review auto-generated migrations before applying — autogenerate does not detect all changes (e.g., custom indexes, trigger changes, enum renames).
 
 ---
 
-## Ongoing Operations
-
-### Update the API after a code change
-
-The repo on the NAS is a git clone. Push changes to GitHub from the Mac, then pull and rebuild on the NAS.
-
-**On the Mac:**
-```bash
-git push origin main
-```
-
-**On the NAS:**
-```bash
-cd /volume1/docker/life-dashboard
-git pull origin main
-sudo docker compose -f infra/docker-compose.yml build api
-sudo docker compose -f infra/docker-compose.yml run --rm api \
-    alembic -c /app/alembic.ini upgrade head
-sudo docker compose -f infra/docker-compose.yml up -d api indexer
-```
-
-If there are no new migrations, skip the `alembic upgrade head` step.
-
-> **Note:** `docker compose run --rm` does not rebuild the image. Always run `docker compose build api` explicitly after pulling new code.
-
-### View logs
+## Updating the app
 
 ```bash
-# API
-sudo docker compose -f infra/docker-compose.yml logs -f api
+# Pull new code
+git pull
 
-# Indexer (watch real-time indexing)
-sudo docker compose -f infra/docker-compose.yml logs -f indexer
+# Rebuild and restart containers
+cd infra
+docker compose build
+docker compose up -d
 
-# Caddy
-sudo docker compose -f infra/docker-compose.yml logs --tail=100 caddy
+# Apply any new migrations
+docker compose exec api alembic upgrade head
 ```
 
-### Restart a service
+---
+
+## Backup
+
+### Database
 
 ```bash
-sudo docker compose -f infra/docker-compose.yml restart api
-sudo docker compose -f infra/docker-compose.yml restart indexer
+# Dump the database
+docker compose exec postgres pg_dump -U USER life_dashboard > backup-$(date +%Y%m%d).sql
+
+# Or if Postgres is running outside Docker
+pg_dump -h HOST -U USER life_dashboard > backup-$(date +%Y%m%d).sql
 ```
 
-### Check service health
+### Restore
 
 ```bash
-sudo docker compose -f infra/docker-compose.yml ps
-curl -s http://localhost:8000/health | python3 -m json.tool
+psql -h HOST -U USER life_dashboard < backup-YYYYMMDD.sql
 ```
 
-### Apply a new Alembic migration
+---
+
+## Logs
 
 ```bash
-cd /volume1/docker/life-dashboard
-sudo docker compose -f infra/docker-compose.yml run --rm api \
-    alembic -c /app/alembic.ini upgrade head
+# All services
+docker compose logs -f
+
+# Single service
+docker compose logs -f api
+docker compose logs -f web
 ```
 
-### Back up the database
+---
+
+## TLS with Caddy
+
+The `infra/caddy/Caddyfile` is a template for TLS termination via Caddy. Replace `YOUR_HOST` with your actual hostname (e.g., a Tailscale MagicDNS name or a public domain).
 
 ```bash
-sudo docker exec postgres-1 pg_dump -U brandon -Fc life_dashboard \
-    > "life_dashboard_$(date +%Y%m%d_%H%M%S).dump"
+# Start Caddy alongside the app
+docker compose --profile caddy up -d
 ```
 
-### Refresh the Tailscale certificate (every ~90 days)
+Caddy handles certificate acquisition automatically when pointed at a public domain. For private network access via Tailscale, use a Tailscale MagicDNS hostname.
 
-```bash
-sudo tailscale cert YOUR_NAS.tailnet-name.ts.net
-sudo docker compose -f infra/docker-compose.yml restart caddy
-```
+---
+
+## Auth notes
+
+- Passwords are hashed with argon2.
+- Access tokens: 15-minute lifetime, stored in memory on the client.
+- Refresh tokens: long-lived, stored in httpOnly cookies with rotation on every use.
+- `BOOTSTRAP_PASSWORD` is the password for the seeded default user on first startup. Once set, it is hashed and the env variable is no longer read. Clear it from `.env` after first login.
 
 ---
 
 ## Troubleshooting
 
-### Indexer shows no logs after `docker compose logs -f indexer`
+**API fails to start — database connection error**
+- Confirm `DATABASE_URL` in `.env` is correct.
+- Confirm the Postgres container or server is running and reachable from the API container.
 
-The indexer may not be running. Check:
-```bash
-sudo docker compose -f infra/docker-compose.yml ps
-```
-If `indexer` is absent or exited, start it:
-```bash
-sudo docker compose -f infra/docker-compose.yml up -d indexer
-```
+**Migrations fail — relation already exists**
+- Check the current migration state: `alembic current`
+- If the schema is ahead of what Alembic tracks, stamp the current head: `alembic stamp head`
 
-### Indexer: `PermissionError: [Errno 13] Permission denied: '/data/logseq/...'`
+**Frontend returns 401 on all requests**
+- The access token may have expired and the refresh endpoint is failing.
+- Check `docker compose logs api` for auth errors.
+- Clearing browser cookies and logging in again typically resolves this.
 
-The indexer container is running as a non-root user. Synology ACL permissions gate access at a layer above standard Unix permissions — even `755` is not enough. Fix: ensure `user: root` is set in the indexer service in `infra/docker-compose.yml`. The `:ro` mount flag prevents any writes.
+**Container restarts in a loop**
+- Check `docker compose logs api` for the traceback.
+- Common causes: bad env variable, failed migration, database unreachable.
 
-### API container is `unhealthy`
+---
 
-```bash
-sudo docker compose -f infra/docker-compose.yml logs api
-```
-Common causes:
-- Database not reachable: verify `postgres-1` is on the `life-dashboard` network (`sudo docker network inspect life-dashboard`)
-- Bad `DATABASE_URL` in `.env`
-- Alembic migrations not applied (`alembic upgrade head`)
+## Brandon's NAS (personal reference)
 
-### `git status` shows everything as modified on the NAS (permission bits)
+> This section records the specific setup on Brandon's Synology NAS. It is not part of the generic self-hosted guide.
 
-```bash
-git diff HEAD  # look for "old mode 100644 / new mode 100755" — no content diff
-git config core.fileMode false
-git config core.autocrlf false
-git status     # should be clean now
-```
+| Item | Value |
+|---|---|
+| NAS model | Synology |
+| Postgres container | `postgres-1` |
+| Postgres port | 5433 external / 5432 internal |
+| App path | `/volume1/docker/life-dashboard-app/` |
+| Docker network | `life-dashboard` (external, manually created) |
 
-### `git pull` fails: `Your local changes would be overwritten`
+**File transfer to NAS**
 
-The NAS repo has unstaged changes (often `.env` or generated files). Options:
+rsync is blocked on Synology SSH (no SFTP subsystem, rsync server mode not available). Use tar over SSH:
 
 ```bash
-# Stash local changes, pull, reapply
-git stash
-git pull origin main
-git stash pop
-
-# Or if you don't care about local changes (WARNING: destructive)
-git fetch origin
-git reset --hard origin/main
+tar czf - -C ~/Code/Personal/life-dashboard --exclude='.git' . \
+  | ssh brandon.olin@192.168.68.58 \
+    "tar xzf - -C /volume1/docker/life-dashboard-app/"
 ```
 
-### `docker compose` says "no configuration file provided"
-
-You're running `docker compose` from the repo root where there's no `docker-compose.yml`. Either:
-```bash
-cd infra/
-sudo docker compose <command>
-# OR
-sudo docker compose -f infra/docker-compose.yml <command>
-```
-
-### Alembic: `PermissionError` on `/app/migrations/env.py`
-
-The Dockerfile's `COPY` directives in the runtime stage are missing `--chown=appuser:appuser`. Check the Dockerfile — all three `COPY` directives in the runtime stage should have the flag:
-```dockerfile
-COPY --chown=appuser:appuser --from=builder /venv /venv
-COPY --chown=appuser:appuser alembic.ini .
-COPY --chown=appuser:appuser migrations/ migrations/
-```
-Rebuild after fixing: `sudo docker compose -f infra/docker-compose.yml build api`
-
-### `scp` fails: `subsystem request failed on channel 0`
-
-Synology's SSH server doesn't expose SFTP. Use `scp -O` for legacy protocol, or use git (`git push` from Mac + `git pull` on NAS). The git workflow is preferred.
-
-### NAS repo in a broken merge state
+**SCP note**: Synology requires the `-O` flag:
 
 ```bash
-# Abort and return to pre-merge state
-git reset --hard ORIG_HEAD
-
-# If that fails or ORIG_HEAD is gone, nuke to match remote
-git fetch origin
-git reset --hard origin/main
+scp -O file.txt brandon.olin@192.168.68.58:/volume1/docker/life-dashboard-app/
 ```
 
-### `GID: bad math expression: operand expected` in zsh
+**Sudo requirement**: All Docker commands on the NAS require `sudo`.
 
-`GID` is a read-only special variable in zsh. Rename your variable to anything else.
+```bash
+sudo docker compose -f /volume1/docker/life-dashboard-app/infra/docker-compose.yml logs -f api
+```
+
+**Postgres access from NAS shell**
+
+```bash
+sudo docker exec -it postgres-1 psql -U brandon -d life_dashboard
+```
+
+**Tailscale**: Not yet installed on this NAS. Remote access currently requires being on the local network or using the NAS VPN. See Task 25 in the roadmap for Tailscale + Caddy TLS setup.

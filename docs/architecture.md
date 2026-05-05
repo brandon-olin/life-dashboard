@@ -1,170 +1,223 @@
 # Architecture
 
-## Principles
+## Overview
 
-1. **Local-first.** Every piece of household data lives on hardware Brandon owns. No third-party cloud sees any of it. Remote access is via Tailscale — a personal VPN — not the public internet.
-2. **Logseq-first.** Notes, tasks, goals, habits, recipes, and grocery lists live in Logseq as plain markdown files. The Logseq UI itself is the day-to-day interface. Custom software is only built where Logseq cannot reach.
-3. **Governed AI.** The local LLM never reads raw markdown files and never writes to the graph. It reads through `logseq_index` (a Postgres table that mirrors graph content) and writes back through a curated MCP tool vocabulary. Powerful but auditable.
-4. **Open formats.** Logseq stores everything as plain markdown. Calendar events are iCal-compatible. Contacts are vCard-compatible. No proprietary formats — every piece of data can be read with a text editor and migrated without vendor permission.
-5. **Audit everything.** Every write through the backend produces an `audit_log` row with actor identity and a structured diff. When the AI is in the loop, there is always a record of what it did and why.
+`life-dashboard` is a local-first household operating system. The core stack is:
 
----
-
-## Data Ownership
-
-Two systems own data. The boundary is strict.
-
-| Domain | Owner | Why |
-|---|---|---|
-| Notes, journals, tasks, goals, habits, recipes, grocery lists | **Logseq** (markdown files on NAS) | Logseq's query, linking, and templating system handles these better than a custom CRUD app |
-| Contacts | **Postgres** | Relational structure, household sharing, vCard compatibility |
-| Calendar events | **Postgres** | Structured queries, recurrence, iCal compatibility |
-| Auth, households, users | **Postgres** | Relational, security-sensitive |
-| Audit log | **Postgres** | Append-only, structured diffs |
-| Tags, attachments | **Postgres** | Normalized, cross-entity |
-| AI search index | **Postgres** (`logseq_index`) | Enables FTS and agent querying without touching raw files |
+- **Backend**: FastAPI (Python 3.12) with SQLAlchemy 2.0 async and Alembic migrations
+- **Frontend**: Next.js 14 (App Router) with Tailwind CSS and shadcn/ui
+- **Database**: Postgres today; local-only mode will also support an embedded database (e.g. SQLite)
+- **Editor**: BlockNote, embedded in the frontend as the document/notes editing layer
+- **AI layer**: local and hosted LLM provider support, accessed through controlled backend APIs
 
 ---
 
-## Graph Boundaries
+## Deployment Modes
 
-Three Logseq graphs enforce strict privacy:
+The product is designed around three deployment modes that share a common domain model.
 
-| Graph | Purpose | Who sees it |
-|---|---|---|
-| `household` | Shared household knowledge: shared tasks, grocery, meal plans, home projects | All household members |
-| `brandon-private` | Personal notes, journal, personal goals | Brandon only |
-| `partner-private` (future) | Partner's personal notes and journal | Partner only |
+### Local-only
 
-No service, output, or AI query crosses graph boundaries without explicit configuration.
+One machine, no server required. A household installs the app and uses it immediately — no Docker, no Postgres, no reverse proxy. Local household member profiles replace real accounts. No sync across devices.
+
+The local-only storage target is an embedded database (SQLite or equivalent) bundled with the app. The domain model and service layer must remain compatible with this path even as self-hosted and hosted modes use Postgres.
+
+### Self-hosted
+
+User-owned infrastructure. Postgres as the database, real user accounts, sync across devices. Intended for technical households who want privacy and control. The `infra/` directory contains a Docker Compose example for this mode.
+
+### Hosted
+
+Managed infrastructure. Same product, lower setup friction. The hosted layer is not yet built; the architecture should leave clean seams for it rather than assuming it will never exist.
 
 ---
 
-## Components
+## Domain Model
 
-### Logseq (primary UI)
+### Primary entities
 
-Logseq runs on each user's machine and opens graphs from the NAS via SMB mount. It is the day-to-day writing, tasking, and organizational interface. No custom frontend is built for any domain that Logseq handles.
+| Entity | Description |
+|---|---|
+| Household | Top-level shared container for all household data |
+| Household member | A person represented in the household domain |
+| Account | Authentication identity used in self-hosted and hosted modes |
+| Local profile | Profile identity used in local-only mode (no account required) |
+| Device | A client installation; may eventually participate in sync |
+| Role | Authorization level — owner, admin, adult member, child, viewer |
+| Assignment | A task, chore, or responsibility linked to a household member |
 
-Graphs live on the NAS at `/volume1/data/logseq/`:
-- `household-graph/` — shared household graph
-- `brandon-private/` — Brandon's personal graph
+### Product objects
 
-Both use markdown format with triple-lowbar file naming (e.g., `Projects___My Plan.md` stores page `Projects/My Plan`).
+The system provides structured support for:
 
-### Database (NAS, `postgres-1` container)
+- Tasks and chores (with assignment to household members)
+- Recurring routines and habits
+- Calendar events and schedules
+- Notes and documents (rich text via BlockNote)
+- Shopping and household lists (grocery, etc.)
+- Goals and milestones
+- Recipes and meal planning
+- Health and activity records
+- AI-generated summaries and suggestions
 
-Postgres 16 in the `postgres-1` container, database `life_dashboard`, owner `brandon`. Holds the structured domains (contacts, calendar, auth, audit, tags, logseq_index). Never exposed to the LAN — only reachable from the `life-dashboard` Docker network.
+---
 
-### Backend API (NAS, `infra-api-1` container)
+## Data Scopes and Privacy
 
-FastAPI + SQLAlchemy 2.0 async + Alembic. Handles auth, contacts, calendar events, and tags. Deployed as a Docker container on the `life-dashboard` network alongside `postgres-1`.
+Privacy boundaries are modeled in code, not inferred from UI conventions.
 
-Internal structure:
+| Scope | Visibility |
+|---|---|
+| Shared household data | All household members, subject to role rules |
+| Personal data | Owning member only, unless explicitly shared |
+| Sensitive data | Narrower visibility; extra caution in AI workflows |
+| Administrative data | Billing, config, audit — restricted to owners/admins |
+
+**Rules enforced at the service layer:**
+1. Personal data is never included in shared household outputs without an explicit share action.
+2. Scope filters are applied in backend service code, not only in frontend conditionals.
+3. AI workflows that aggregate across scopes must respect the narrowest applicable visibility.
+
+---
+
+## Backend Structure
 
 ```
 api/src/life_dashboard/
-├── core/           # Settings, DB session
-├── domains/
-│   ├── auth/       # argon2 password hashing, JWT, refresh tokens
-│   ├── calendar_events/
-│   ├── contacts/
-│   └── tags/
-└── indexer/        # Graph indexer service (runs as a separate container)
+├── core/
+│   ├── database.py       # Async engine, session dependency
+│   └── settings.py       # Pydantic-settings config
+├── auth/
+│   ├── dependencies.py   # get_current_user — attaches household_id
+│   ├── hashing.py
+│   ├── models.py
+│   ├── router.py
+│   ├── schemas.py
+│   ├── service.py        # Bootstrap logic, token management
+│   └── tokens.py
+└── domains/
+    ├── calendar_events/
+    ├── contacts/
+    ├── documents/        # BlockNote document tree (source_markdown + editor_json)
+    ├── goals/
+    ├── grocery_lists/
+    ├── habits/
+    ├── recipes/
+    ├── tags/
+    ├── todos/
+    └── workouts/         # Strength, cardio, HIIT; polymorphic metrics JSONB
 ```
 
-The service layer (`domains/*/service.py`) imports nothing from FastAPI. Both the REST API and the future MCP server call into the same service layer.
+### Service layer discipline
 
-### Graph Indexer (NAS, `infra-indexer-1` container)
+Each domain follows `models → schemas → service → router`. The service layer (`*/service.py`) imports nothing from FastAPI — only SQLAlchemy and domain types. Both the HTTP routers and the future MCP/AI server call into the same service layer. This keeps domain logic reusable and independently testable.
 
-A Python async service that keeps `logseq_index` in sync with the Logseq graph files.
+### Key patterns
 
-**On startup:** Walks each graph's `pages/` and `journals/` directories. Parses each `.md` file (extracts page properties, tags, block count, content hash). Upserts into `logseq_index`. Rows unchanged since last index are skipped at the Postgres level via `WHERE content_hash IS DISTINCT FROM EXCLUDED.content_hash`. Orphaned rows (files deleted since last run) are removed via reconcile.
+- **`lazy="noload"` on all ORM relationships** — prevents `MissingGreenlet` errors in async context. Related data is loaded via explicit bulk queries, not relationship traversal.
+- **`model_validate` + `model_copy`** — used to inject bulk-loaded related data (tags, children, etc.) into Pydantic response schemas without triggering lazy loads.
+- **True PATCH semantics** — `data.model_fields_set` distinguishes "field not sent" from "field sent as null". Only explicitly included fields are updated.
+- **`household_id` on every domain entity** — every root table carries `household_id` and `created_by_user_id`. The `get_current_user` auth dependency attaches `household_id` from `HouseholdMembership` so routers never query the membership table directly.
 
-**After startup:** Watchdog filesystem observer watches each graph root. File create/modify events trigger parse + upsert. Delete events remove the row. Move events are handled atomically (delete old path, upsert new path). File events are bridged from the watchdog thread into an asyncio queue.
+### Auth
 
-The indexer runs in the same Docker image as the API but with a different `command`. It runs as `root` because Synology shared folders use ACL-based permissions that don't map to container UIDs — non-root containers cannot read the graphs even with `755` Unix permissions. The volume is mounted `:ro` so the container cannot modify graph files regardless.
+argon2 password hashing, JWT access tokens (15-minute lifetime), httpOnly refresh token cookies with rotation. First-run bootstrap: the default user is seeded with a sentinel password hash (`'!'`) that cannot be matched; on first startup, `BOOTSTRAP_PASSWORD` from the environment is hashed and written, then cleared.
 
-### `logseq_index` Table
+---
 
-The AI's read window into the Logseq graphs. Schema:
+## Frontend Structure
 
-| Column | Type | Notes |
+```
+web/src/
+├── app/
+│   ├── (auth)/login/         # Login page
+│   └── (protected)/          # All authenticated routes
+│       ├── layout.tsx         # Shell wrapper
+│       ├── page.tsx           # Home dashboard
+│       ├── todos/
+│       ├── habits/
+│       └── ...
+├── components/
+│   ├── shell/                 # Sidebar, nav, command palette
+│   ├── dashboard/             # Dashboard widgets
+│   ├── ui/                    # shadcn/ui primitives
+│   └── [domain]/              # Domain-specific components
+└── lib/
+    ├── api/
+    │   ├── client.ts          # Typed fetch wrapper
+    │   ├── query.ts           # TanStack Query helpers
+    │   └── schema.d.ts        # OpenAPI-generated types
+    └── auth/
+        ├── context.tsx        # Auth provider + useAuth hook
+        └── token.ts           # In-memory access token management
+```
+
+Navigation sections: Dashboard · Documents · Tasks · Habits · Goals · Kitchen (Recipes + Grocery Lists) · Health (Workouts) · Contacts · Settings.
+
+---
+
+## Database Schema
+
+Alembic manages all schema evolution. Migrations live in `api/migrations/versions/`.
+
+### Conventions
+
+- UUID primary keys (`gen_random_uuid()`)
+- `created_at` / `updated_at` timestamptz on every table; `updated_at` maintained by DB trigger
+- Cascading FKs for owned children; SET NULL for soft associations
+- `household_id` on all root entities; child tables (e.g. `grocery_items`, `recipe_ingredients`) inherit via parent FK
+- All enum types created by migrations with `create_type=False` in SQLAlchemy model declarations
+
+### Current tables
+
+| Table | Purpose |
+|---|---|
+| `households` | Top-level household container |
+| `users` | Authenticated identities |
+| `household_memberships` | User ↔ household join with role |
+| `refresh_tokens` | JWT refresh token store |
+| `documents` | BlockNote page tree (source_markdown + editor_json JSONB, parent_id hierarchy) |
+| `todos` | Tasks with status, due date, recurrence JSONB, hierarchy |
+| `habits` + `habit_occurrences` | Habit definitions and completion log |
+| `goals` | Hierarchical goals with progress tracking |
+| `recipes` + `recipe_ingredients` + `recipe_steps` | Recipe store |
+| `grocery_lists` + `grocery_items` | Shopping lists |
+| `workouts` + `exercise_entries` | Workout log; exercise metrics in JSONB (typed by strength/cardio/hiit/etc.) |
+| `contacts` + child tables | vCard-compatible contact store |
+| `calendar_events` | iCal-compatible events with recurrence |
+| `tags` + `taggings` | Normalized polymorphic tag system |
+| `attachments` | File reference store |
+| `audit_log` | Append-only write log with structured diffs |
+| `schema_migrations` | Migration version tracking |
+
+---
+
+## Open-Core Boundary
+
+| Layer | Open core | Premium / hosted |
 |---|---|---|
-| `id` | UUID | Primary key |
-| `graph` | text | Graph name (e.g., `household`, `brandon-private`) |
-| `page_name` | text | Page name as shown in Logseq (e.g., `Projects/My Plan`, `journals/2024-01-15`) |
-| `file_path` | text | Absolute path to the source `.md` file on the NAS |
-| `content` | text | Full markdown content of the page |
-| `properties` | JSONB | Parsed Logseq property drawer (`key:: value` pairs) |
-| `tags` | text[] | Tags from `tags::` property + inline `#tag` syntax, deduplicated |
-| `block_count` | integer | Count of lines matching `^\s*-\s` |
-| `content_hash` | text | SHA-256 of content, used for change detection |
-| `last_indexed_at` | timestamptz | When this row was last updated |
-| `created_at` | timestamptz | — |
-| `updated_at` | timestamptz | — |
+| Household domain model | ✓ | |
+| Chores, tasks, habits, goals | ✓ | |
+| Document editing (BlockNote) | ✓ | |
+| Local-only mode | ✓ | |
+| Self-hosted deployment | ✓ | |
+| Basic AI / BYOK hooks | ✓ | |
+| Managed sync service | | ✓ |
+| Hosted infrastructure | | ✓ |
+| Polished mobile apps | | ✓ |
+| Managed AI credits | | ✓ |
+| Premium integrations (operational cost) | | ✓ |
 
-Indexes: unique on `(graph, page_name)`, btree on `graph`, GIN on `tags`, functional GIN on `to_tsvector('english', content)` for full-text search.
-
-### Caddy (NAS, `infra-caddy-1` container)
-
-TLS termination and reverse proxy. Serves `https://YOUR_NAS.tailnet-name.ts.net`. Certificates are issued by Tailscale and stored at `/var/packages/Tailscale/var/certs/`.
-
-### Local LLM (gaming PC, future — Phase 4)
-
-Ollama or LM Studio running on the gaming PC on the same Tailscale network. The MCP server (to be built in Phase 4) will expose the `logseq_index` to the LLM via a curated tool vocabulary. The LLM reads through `logseq_index` and writes back through MCP tools — never directly to the graph files or Postgres.
+The open core should be genuinely useful — not artificially limited. If a design makes the free/local product feel fake, push back.
 
 ---
 
-## Network Topology
+## AI Layer (Planned — Phase 4)
 
-```
-[ Mac / phones / laptops ]
-           |
-           | Tailscale
-           |
-   [ NAS (192.168.68.58) ]
-           |
-     Docker network: life-dashboard
-           |
-     +-----+---------------------------+
-     |                                 |
-  infra-api-1 (FastAPI :8000)     postgres-1 (Postgres :5432)
-  infra-indexer-1 (indexer)
-  infra-caddy-1 (Caddy :80/:443)
-           |
-     Logseq graphs (SMB share)
-           |
-     /volume1/data/logseq/
-       household-graph/
-       brandon-private/
+The AI layer is an augmentation layer, not a source of truth. Architecture principles:
 
-[ Gaming PC ] --Tailscale--> [ infra-api-1 MCP endpoint (future) ]
-     |
-     +-- Local LLM (Ollama / LM Studio)
-```
-
----
-
-## Permission Model
-
-Three actor types: `user`, `agent`, `system`.
-
-- **user**: authenticated human with a household membership. Role determines what they can do (owner/admin/member/viewer).
-- **agent**: the local LLM, identified by an agent user record (`is_agent = true`). Reads `logseq_index` freely; writes only through MCP tools, never directly.
-- **system**: automated jobs, migrations, imports.
-
-Every write through the backend:
-1. Authenticates the actor and resolves their household.
-2. Validates the payload.
-3. Checks authorization.
-4. Executes in a transaction.
-5. Writes an `audit_log` row with a structured diff.
-
----
-
-## What Was Retired
-
-Phase 2 dropped eleven database tables that Logseq now handles natively: `notes`, `note_links`, `goals`, `todos`, `habits`, `habit_occurrences`, `recipes`, `recipe_ingredients`, `recipe_steps`, `grocery_lists`, `grocery_items`. The `note_type` and `priority_level` Postgres enums went with them.
-
-The corresponding FastAPI domain modules (`notes/`, `goals/`, `todos/`, `habits/`, `recipes/`, `grocery_lists/`) were deleted from the codebase in the same phase.
+- The LLM never reads the database directly and never writes outside controlled tool boundaries.
+- AI tools are defined in `agent/` and call into the same backend service layer as the HTTP API.
+- Provider integrations are modular: local LLM (Ollama/LM Studio), BYOK (OpenAI/Anthropic key), and future managed AI credits are all valid configurations.
+- Every AI-triggered write produces an `audit_log` row.
+- Destructive or bulk AI actions require human approval gates.

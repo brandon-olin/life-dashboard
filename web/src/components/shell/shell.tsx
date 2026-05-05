@@ -19,6 +19,8 @@ import {
   Users,
   ChefHat,
   ShoppingCart,
+  Dumbbell,
+  Settings,
   Menu,
   MessageSquare,
   LogOut,
@@ -26,78 +28,34 @@ import {
 } from "lucide-react";
 
 // ── nav items ─────────────────────────────────────────────────────────────────
+// Ordered to match the product navigation:
+// Dashboard · Documents · Tasks · Habits · Goals · Calendar ·
+// Recipes · Grocery Lists · Workouts · Contacts · Settings
 
-const ALL_NAV_ITEMS = [
-  { href: "/",              label: "Dashboard",     icon: LayoutDashboard, modes: ["work", "personal"] },
-  { href: "/todos",         label: "To-dos",        icon: CheckSquare,     modes: ["work"] },
-  { href: "/goals",         label: "Goals",         icon: Target,          modes: ["work"] },
-  { href: "/habits",        label: "Habits",        icon: Repeat,          modes: ["work", "personal"] },
-  { href: "/notes",         label: "Notes",         icon: FileText,        modes: ["work", "personal"] },
-  { href: "/calendar",      label: "Calendar",      icon: Calendar,        modes: ["work"] },
-  { href: "/recipes",       label: "Recipes",       icon: ChefHat,         modes: ["personal"] },
-  { href: "/grocery-lists", label: "Grocery Lists", icon: ShoppingCart,    modes: ["personal"] },
-  { href: "/contacts",      label: "Contacts",      icon: Users,           modes: ["personal"] },
+const NAV_ITEMS = [
+  { href: "/",              label: "Dashboard",     icon: LayoutDashboard },
+  { href: "/documents",     label: "Documents",     icon: FileText        },
+  { href: "/todos",         label: "Tasks",         icon: CheckSquare     },
+  { href: "/habits",        label: "Habits",        icon: Repeat          },
+  { href: "/goals",         label: "Goals",         icon: Target          },
+  { href: "/calendar",      label: "Calendar",      icon: Calendar        },
+  { href: "/recipes",       label: "Recipes",       icon: ChefHat         },
+  { href: "/grocery-lists", label: "Grocery Lists", icon: ShoppingCart    },
+  { href: "/workouts",      label: "Workouts",      icon: Dumbbell        },
+  { href: "/contacts",      label: "Contacts",      icon: Users           },
+  { href: "/settings",      label: "Settings",      icon: Settings        },
 ] as const;
-
-type Mode = "work" | "personal";
-
-// ── mode persistence ──────────────────────────────────────────────────────────
-
-function useMode(): [Mode, (m: Mode) => void] {
-  const [mode, setModeState] = useState<Mode>("work");
-
-  useEffect(() => {
-    const stored = localStorage.getItem("nav-mode");
-    if (stored === "work" || stored === "personal") setModeState(stored);
-  }, []);
-
-  function setMode(m: Mode) {
-    setModeState(m);
-    localStorage.setItem("nav-mode", m);
-  }
-
-  return [mode, setMode];
-}
-
-// ── mode toggle pill ──────────────────────────────────────────────────────────
-
-function ModeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
-  return (
-    <div className="flex rounded-full bg-muted p-0.5 text-xs font-medium">
-      {(["work", "personal"] as Mode[]).map((m) => (
-        <button
-          key={m}
-          type="button"
-          onClick={() => setMode(m)}
-          className={cn(
-            "flex-1 px-3 py-1 rounded-full transition-all cursor-pointer capitalize",
-            mode === m
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          {m}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 // ── nav links ─────────────────────────────────────────────────────────────────
 
 function NavLinks({
-  mode,
   onNavigate,
   onSearchOpen,
 }: {
-  mode: Mode;
   onNavigate?: () => void;
   onSearchOpen: () => void;
 }) {
   const pathname = usePathname();
-  const items = ALL_NAV_ITEMS.filter((item) =>
-    (item.modes as readonly string[]).includes(mode)
-  );
 
   return (
     <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
@@ -116,7 +74,7 @@ function NavLinks({
 
       <div className="my-1 border-t" />
 
-      {items.map(({ href, label, icon: Icon }) => {
+      {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
         const active =
           href === "/" ? pathname === "/" : pathname.startsWith(href);
         return (
@@ -143,13 +101,9 @@ function NavLinks({
 // ── sidebar content ───────────────────────────────────────────────────────────
 
 function SidebarContent({
-  mode,
-  setMode,
   onNavigate,
   onSearchOpen,
 }: {
-  mode: Mode;
-  setMode: (m: Mode) => void;
   onNavigate?: () => void;
   onSearchOpen: () => void;
 }) {
@@ -163,14 +117,13 @@ function SidebarContent({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 pt-5 pb-3 shrink-0 space-y-3">
+      <div className="px-4 pt-5 pb-3 shrink-0">
         <span className="px-2 text-base font-semibold tracking-tight">
           Life Dashboard
         </span>
-        <ModeToggle mode={mode} setMode={setMode} />
       </div>
 
-      <NavLinks mode={mode} onNavigate={onNavigate} onSearchOpen={onSearchOpen} />
+      <NavLinks onNavigate={onNavigate} onSearchOpen={onSearchOpen} />
 
       <div className="px-3 pb-5 pt-3 shrink-0 space-y-1 border-t mt-2">
         <Button
@@ -208,7 +161,6 @@ function SidebarContent({
 export function Shell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [mode, setMode] = useMode();
 
   // Global Cmd+P / Ctrl+P shortcut
   useEffect(() => {
@@ -226,11 +178,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     <div className="flex h-full">
       {/* Desktop sidebar */}
       <aside className="hidden md:flex flex-col w-64 shrink-0 border-r bg-card">
-        <SidebarContent
-          mode={mode}
-          setMode={setMode}
-          onSearchOpen={() => setPaletteOpen(true)}
-        />
+        <SidebarContent onSearchOpen={() => setPaletteOpen(true)} />
       </aside>
 
       {/* Right column */}
@@ -246,8 +194,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </SheetTrigger>
             <SheetContent side="left" className="w-64 p-0">
               <SidebarContent
-                mode={mode}
-                setMode={setMode}
                 onNavigate={() => setMobileOpen(false)}
                 onSearchOpen={() => { setMobileOpen(false); setPaletteOpen(true); }}
               />

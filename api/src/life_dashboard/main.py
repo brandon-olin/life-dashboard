@@ -15,6 +15,7 @@ from life_dashboard.domains.habits.router import router as habits_router
 from life_dashboard.domains.recipes.router import router as recipes_router
 from life_dashboard.domains.tags.router import router as tags_router
 from life_dashboard.domains.todos.router import router as todos_router
+from life_dashboard.domains.workouts.router import router as workouts_router
 from life_dashboard.auth.service import run_bootstrap_if_needed
 from life_dashboard.core.database import AsyncSessionLocal, engine
 from life_dashboard.core.settings import settings
@@ -81,6 +82,7 @@ app.include_router(habits_router)
 app.include_router(recipes_router)
 app.include_router(tags_router)
 app.include_router(todos_router)
+app.include_router(workouts_router)
 
 
 @app.get("/health", tags=["ops"])
