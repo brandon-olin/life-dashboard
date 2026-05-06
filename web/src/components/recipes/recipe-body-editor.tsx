@@ -7,6 +7,8 @@ import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/shadcn";
 import { Check, Loader2 } from "lucide-react";
 import type { Block } from "@blocknote/core";
+import { useThemeCustomizer } from "@/lib/theme/context";
+import { BASE_THEMES } from "@/lib/theme/presets";
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/shadcn/style.css";
 
@@ -24,6 +26,12 @@ function EditorInner({
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { mutateAsync: patchRecipe } = $api.useMutation("patch", "/recipes/{recipe_id}");
+
+  // Derive dark/light from the active base theme so BlockNote's
+  // data-color-scheme attribute stays in sync with the app theme.
+  const { config } = useThemeCustomizer();
+  const activeBase = BASE_THEMES.find((t) => t.id === config.baseThemeId);
+  const bnTheme: "light" | "dark" = activeBase?.category === "dark" ? "dark" : "light";
 
   const editor = useCreateBlockNote();
 
@@ -68,7 +76,7 @@ function EditorInner({
       <div className="-mx-[54px]">
         <BlockNoteView
           editor={editor}
-          theme="light"
+          theme={bnTheme}
           onChange={scheduleSave}
         />
       </div>

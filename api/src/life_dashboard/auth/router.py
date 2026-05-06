@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from life_dashboard.auth.dependencies import get_current_user
 from life_dashboard.auth.models import User
@@ -112,9 +113,13 @@ async def update_me(
     if body.display_name is not None:
         current_user.display_name = body.display_name
     if body.preferences is not None:
-        # Merge rather than replace so clients can update individual keys.
+        # Merge rather than replace so clients can update individual keys
+        # (e.g. a theme PATCH doesn't clobber a concurrent sidebar PATCH).
         existing = current_user.preferences or {}
         current_user.preferences = {**existing, **body.preferences}
+        # SQLAlchemy doesn't always detect JSONB mutations when the dict
+        # reference changes; flag_modified ensures the column is flushed.
+        flag_modified(current_user, "preferences")
     await db.commit()
     await db.refresh(current_user)
     return UserResponse.model_validate(current_user)

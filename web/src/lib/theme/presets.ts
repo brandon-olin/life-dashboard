@@ -395,6 +395,9 @@ export function applyThemeConfig(config: ThemeConfig, animate = true): void {
 
   const base = BASE_THEMES.find((t) => t.id === config.baseThemeId) ?? BASE_THEMES[0];
   const accent = ACCENT_COLORS.find((a) => a.id === config.accentId) ?? ACCENT_COLORS[0];
+
+  // Toggle .dark class so components that check it (BlockNote, etc.) stay in sync.
+  root.classList.toggle("dark", base.category === "dark");
   const accentVars = base.category === "dark" ? accent.dark : accent.light;
 
   // Apply base vars

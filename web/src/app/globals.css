@@ -144,3 +144,29 @@ html.theme-switching *::after {
     transform 300ms ease,
     translate 300ms ease !important;
 }
+
+/* ── BlockNote theme bridge ────────────────────────────────────────────────────
+   BlockNote uses its own --bn-colors-* custom properties. By setting them on
+   :root with !important, they take precedence over BlockNote's own class-level
+   declarations (.bn-root and .bn-root[data-color-scheme=dark]), keeping the
+   editor visually consistent with whichever app theme is active.
+
+   var(--background) etc resolve to whatever our theme system has set as inline
+   styles on <html>, so this updates automatically when the theme changes. */
+:root {
+  --bn-colors-editor-background: var(--background) !important;
+  --bn-colors-editor-text: var(--foreground) !important;
+  --bn-colors-menu-background: var(--card) !important;
+  --bn-colors-menu-text: var(--foreground) !important;
+  --bn-colors-tooltip-background: var(--muted) !important;
+  --bn-colors-tooltip-text: var(--muted-foreground) !important;
+  --bn-colors-hovered-background: var(--muted) !important;
+  --bn-colors-hovered-text: var(--foreground) !important;
+  --bn-colors-selected-background: var(--primary) !important;
+  --bn-colors-selected-text: var(--primary-foreground) !important;
+  --bn-colors-disabled-background: var(--muted) !important;
+  --bn-colors-disabled-text: var(--muted-foreground) !important;
+  --bn-colors-shadow: var(--border) !important;
+  --bn-colors-border: var(--border) !important;
+  --bn-colors-side-menu: var(--muted-foreground) !important;
+}
