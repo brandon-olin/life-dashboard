@@ -28,11 +28,8 @@ import {
 } from "lucide-react";
 
 // ── nav items ─────────────────────────────────────────────────────────────────
-// Ordered to match the product navigation:
-// Dashboard · Documents · Tasks · Habits · Goals · Calendar ·
-// Recipes · Grocery Lists · Workouts · Contacts · Settings
 
-const NAV_ITEMS = [
+export const ALL_NAV_ITEMS = [
   { href: "/",              label: "Dashboard",     icon: LayoutDashboard },
   { href: "/documents",     label: "Documents",     icon: FileText        },
   { href: "/todos",         label: "Tasks",         icon: CheckSquare     },
@@ -46,6 +43,44 @@ const NAV_ITEMS = [
   { href: "/settings",      label: "Settings",      icon: Settings        },
 ] as const;
 
+export const SIDEBAR_STORAGE_KEY = "ld-sidebar-config";
+
+export type SidebarConfig = {
+  hidden: string[]; // hrefs that are hidden
+  order: string[];  // hrefs in display order (if empty, use default)
+};
+
+export function loadSidebarConfig(): SidebarConfig {
+  if (typeof window === "undefined") return { hidden: [], order: [] };
+  try {
+    const raw = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+    if (!raw) return { hidden: [], order: [] };
+    return { hidden: [], order: [], ...JSON.parse(raw) };
+  } catch {
+    return { hidden: [], order: [] };
+  }
+}
+
+export function saveSidebarConfig(config: SidebarConfig): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(SIDEBAR_STORAGE_KEY, JSON.stringify(config));
+}
+
+function getOrderedVisibleItems(config: SidebarConfig) {
+  const allHrefs = ALL_NAV_ITEMS.map((n) => n.href);
+  const orderedHrefs =
+    config.order.length > 0
+      ? [
+          ...config.order.filter((h) => allHrefs.includes(h as typeof allHrefs[number])),
+          ...allHrefs.filter((h) => !config.order.includes(h)),
+        ]
+      : allHrefs;
+
+  return orderedHrefs
+    .map((href) => ALL_NAV_ITEMS.find((n) => n.href === href))
+    .filter((n): n is typeof ALL_NAV_ITEMS[number] => !!n && !config.hidden.includes(n.href));
+}
+
 // ── nav links ─────────────────────────────────────────────────────────────────
 
 function NavLinks({
@@ -56,6 +91,24 @@ function NavLinks({
   onSearchOpen: () => void;
 }) {
   const pathname = usePathname();
+  const [sidebarConfig, setSidebarConfig] = useState<SidebarConfig>({ hidden: [], order: [] });
+
+  useEffect(() => {
+    setSidebarConfig(loadSidebarConfig());
+    function onStorage(e: StorageEvent) {
+      if (e.key === SIDEBAR_STORAGE_KEY) setSidebarConfig(loadSidebarConfig());
+    }
+    window.addEventListener("storage", onStorage);
+    // Also listen for custom events from settings page (same tab)
+    function onCustom() { setSidebarConfig(loadSidebarConfig()); }
+    window.addEventListener("ld-sidebar-update", onCustom);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("ld-sidebar-update", onCustom);
+    };
+  }, []);
+
+  const visibleItems = getOrderedVisibleItems(sidebarConfig);
 
   return (
     <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
@@ -74,9 +127,8 @@ function NavLinks({
 
       <div className="my-1 border-t" />
 
-      {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
-        const active =
-          href === "/" ? pathname === "/" : pathname.startsWith(href);
+      {visibleItems.map(({ href, label, icon: Icon }) => {
+        const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
         return (
           <Link
             key={href}
@@ -162,7 +214,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
-  // Global Cmd+P / Ctrl+P shortcut
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "p") {

@@ -125,6 +125,7 @@ async def create_recipe(
         cook_time_minutes=data.cook_time_minutes,
         servings=data.servings,
         notes=data.notes,
+        body=data.body,
     )
     db.add(recipe)
     await db.flush()
@@ -208,7 +209,7 @@ async def update_recipe(
 
     sent = data.model_fields_set
     for field in ("goal_id", "name", "description", "source_url",
-                  "prep_time_minutes", "cook_time_minutes", "servings", "notes"):
+                  "prep_time_minutes", "cook_time_minutes", "servings", "notes", "body"):
         if field in sent:
             setattr(recipe, field, getattr(data, field))
 

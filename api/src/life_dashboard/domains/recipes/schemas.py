@@ -44,6 +44,7 @@ class RecipeCreate(BaseModel):
     notes: str | None = None
     ingredients: list[IngredientData] = []
     steps: list[StepData] = []
+    body: dict | None = None
 
 
 class RecipeUpdate(BaseModel):
@@ -57,6 +58,7 @@ class RecipeUpdate(BaseModel):
     notes: str | None = None
     ingredients: list[IngredientData] | None = None
     steps: list[StepData] | None = None
+    body: dict | None = None
 
 
 class RecipeResponse(BaseModel):
@@ -73,6 +75,7 @@ class RecipeResponse(BaseModel):
     cook_time_minutes: int | None
     servings: int | None
     notes: str | None
+    body: dict | None
     created_at: datetime
     updated_at: datetime
     ingredients: list[IngredientResponse] = []

@@ -1743,6 +1743,8 @@ export interface components {
              * @default []
              */
             steps: components["schemas"]["StepData"][];
+            /** Body */
+            body?: Record<string, unknown> | null;
         };
         /** RecipeListResponse */
         RecipeListResponse: {
@@ -1785,6 +1787,8 @@ export interface components {
             servings: number | null;
             /** Notes */
             notes: string | null;
+            /** Body */
+            body: Record<string, unknown> | null;
             /**
              * Created At
              * Format: date-time
@@ -1833,6 +1837,8 @@ export interface components {
             ingredients?: components["schemas"]["IngredientData"][] | null;
             /** Steps */
             steps?: components["schemas"]["StepData"][] | null;
+            /** Body */
+            body?: Record<string, unknown> | null;
         };
         /** StepData */
         StepData: {
