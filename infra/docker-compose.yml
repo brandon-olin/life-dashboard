@@ -14,7 +14,8 @@ services:
     restart: unless-stopped
     networks:
       - life-dashboard
-    # Not exposed to the host — Caddy reaches it via the Docker network.
+    ports:
+      - "8000:8000"
     env_file:
       - .env
     healthcheck:
