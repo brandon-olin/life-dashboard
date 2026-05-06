@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Settings, Eye, EyeOff, ChevronUp, ChevronDown, Palette, Layout } from "lucide-react";
+import { useRef, useState } from "react";
+import { Settings, Eye, EyeOff, GripVertical, Palette, Layout } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useThemeCustomizer } from "@/lib/theme/context";
 import {
@@ -11,12 +11,8 @@ import {
   FONT_OPTIONS,
   type ThemeConfig,
 } from "@/lib/theme/presets";
-import {
-  ALL_NAV_ITEMS,
-  loadSidebarConfig,
-  saveSidebarConfig,
-  type SidebarConfig,
-} from "@/components/shell/shell";
+import { useSidebarConfig } from "@/lib/sidebar/context";
+import { ALL_NAV_ITEMS } from "@/components/shell/shell";
 
 // ── Section wrapper ───────────────────────────────────────────────────────────
 
@@ -36,27 +32,19 @@ function Section({ title, icon: Icon, children }: {
   );
 }
 
-// ── Sidebar customizer ────────────────────────────────────────────────────────
+// ── Sidebar customizer (drag-and-drop) ────────────────────────────────────────
 
 function SidebarCustomizer() {
-  const [config, setConfig] = useState<SidebarConfig>({ hidden: [], order: [] });
-
-  useEffect(() => {
-    setConfig(loadSidebarConfig());
-  }, []);
-
-  function save(next: SidebarConfig) {
-    setConfig(next);
-    saveSidebarConfig(next);
-    window.dispatchEvent(new Event("ld-sidebar-update"));
-  }
+  const { sidebarConfig, setSidebarConfig } = useSidebarConfig();
+  const dragHrefRef = useRef<string | null>(null);
+  const [dragOverHref, setDragOverHref] = useState<string | null>(null);
 
   const allHrefs = ALL_NAV_ITEMS.map((n) => n.href);
   const orderedHrefs =
-    config.order.length > 0
+    sidebarConfig.order.length > 0
       ? [
-          ...config.order.filter((h) => allHrefs.includes(h as (typeof allHrefs)[number])),
-          ...allHrefs.filter((h) => !config.order.includes(h)),
+          ...sidebarConfig.order.filter((h) => allHrefs.includes(h as (typeof allHrefs)[number])),
+          ...allHrefs.filter((h) => !sidebarConfig.order.includes(h)),
         ]
       : [...allHrefs];
 
@@ -65,55 +53,85 @@ function SidebarCustomizer() {
     .filter((n): n is (typeof ALL_NAV_ITEMS)[number] => !!n);
 
   function toggleHidden(href: string) {
-    const hidden = config.hidden.includes(href)
-      ? config.hidden.filter((h) => h !== href)
-      : [...config.hidden, href];
-    save({ ...config, hidden });
+    const hidden = sidebarConfig.hidden.includes(href)
+      ? sidebarConfig.hidden.filter((h) => h !== href)
+      : [...sidebarConfig.hidden, href];
+    setSidebarConfig({ ...sidebarConfig, hidden });
   }
 
-  function moveItem(href: string, direction: "up" | "down") {
-    const idx = orderedHrefs.indexOf(href);
-    if (idx === -1) return;
+  function handleDragStart(href: string) {
+    dragHrefRef.current = href;
+  }
+
+  function handleDragOver(e: React.DragEvent, targetHref: string) {
+    e.preventDefault();
+    if (dragHrefRef.current !== targetHref) {
+      setDragOverHref(targetHref);
+    }
+  }
+
+  function handleDrop(targetHref: string) {
+    const fromHref = dragHrefRef.current;
+    if (!fromHref || fromHref === targetHref) {
+      setDragOverHref(null);
+      return;
+    }
+
     const next = [...orderedHrefs];
-    const swap = direction === "up" ? idx - 1 : idx + 1;
-    if (swap < 0 || swap >= next.length) return;
-    [next[idx], next[swap]] = [next[swap], next[idx]];
-    save({ ...config, order: next });
+    const fromIdx = next.indexOf(fromHref);
+    const toIdx   = next.indexOf(targetHref);
+    if (fromIdx === -1 || toIdx === -1) { setDragOverHref(null); return; }
+
+    next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, fromHref);
+
+    setSidebarConfig({ ...sidebarConfig, order: next });
+    dragHrefRef.current = null;
+    setDragOverHref(null);
+  }
+
+  function handleDragEnd() {
+    dragHrefRef.current = null;
+    setDragOverHref(null);
   }
 
   return (
     <div className="space-y-1">
       <p className="text-xs text-muted-foreground mb-3">
-        Show or hide sections in the sidebar. Use the arrows to reorder.
+        Drag to reorder. Toggle the eye icon to show or hide sections.
       </p>
-      {orderedItems.map((item, idx) => {
-        const isHidden = config.hidden.includes(item.href);
+      {orderedItems.map((item) => {
+        const isHidden   = sidebarConfig.hidden.includes(item.href);
+        const isDragOver = dragOverHref === item.href;
         const Icon = item.icon;
+
         return (
           <div
             key={item.href}
+            draggable
+            onDragStart={() => handleDragStart(item.href)}
+            onDragOver={(e) => handleDragOver(e, item.href)}
+            onDrop={() => handleDrop(item.href)}
+            onDragEnd={handleDragEnd}
             className={cn(
-              "flex items-center gap-3 px-3 py-2.5 rounded-md border bg-background transition-opacity",
-              isHidden && "opacity-40"
+              "flex items-center gap-3 px-3 py-2.5 rounded-md border bg-background transition-all select-none",
+              isHidden && "opacity-40",
+              isDragOver && "border-primary bg-primary/5 scale-[1.01]"
             )}
           >
+            {/* Drag handle */}
+            <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground/50 cursor-grab active:cursor-grabbing" />
+
             <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="flex-1 text-sm font-medium">{item.label}</span>
 
-            <div className="flex flex-col">
-              <button type="button" onClick={() => moveItem(item.href, "up")} disabled={idx === 0}
-                className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Move up">
-                <ChevronUp className="h-3.5 w-3.5" />
-              </button>
-              <button type="button" onClick={() => moveItem(item.href, "down")} disabled={idx === orderedItems.length - 1}
-                className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed" aria-label="Move down">
-                <ChevronDown className="h-3.5 w-3.5" />
-              </button>
-            </div>
-
-            <button type="button" onClick={() => toggleHidden(item.href)}
-              className="text-muted-foreground hover:text-foreground ml-1"
-              aria-label={isHidden ? "Show in sidebar" : "Hide from sidebar"}>
+            {/* Visibility toggle */}
+            <button
+              type="button"
+              onClick={() => toggleHidden(item.href)}
+              className="text-muted-foreground hover:text-foreground ml-1 cursor-pointer"
+              aria-label={isHidden ? "Show in sidebar" : "Hide from sidebar"}
+            >
               {isHidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
@@ -160,7 +178,6 @@ function ThemeCustomizer() {
                   active ? "border-primary" : "border-transparent hover:border-muted-foreground/30"
                 )}
               >
-                {/* Mini preview */}
                 <span className="w-full h-10 rounded-md border border-border/60 relative overflow-hidden"
                   style={{ background: theme.vars["--background"] }}>
                   <span className="absolute inset-x-2 top-2 h-1.5 rounded-full"
@@ -301,7 +318,7 @@ function ThemeCustomizer() {
       <div>
         <button type="button"
           onClick={() => setConfig({ baseThemeId: "clean", accentId: "neutral", radius: "0.625rem", fontFamily: "var(--font-geist-sans), sans-serif" })}
-          className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+          className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer"
         >
           Reset to defaults
         </button>

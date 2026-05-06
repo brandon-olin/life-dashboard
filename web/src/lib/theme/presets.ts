@@ -384,8 +384,14 @@ export function saveThemeConfig(config: ThemeConfig): void {
 // Sets ALL CSS custom properties as inline styles on <html>.
 // Inline styles override both :root {} and .dark {} stylesheet rules.
 
-export function applyThemeConfig(config: ThemeConfig): void {
+export function applyThemeConfig(config: ThemeConfig, animate = true): void {
   const root = document.documentElement;
+
+  // Add transition class for smooth 300ms color animations
+  if (animate) {
+    root.classList.add("theme-switching");
+    setTimeout(() => root.classList.remove("theme-switching"), 400);
+  }
 
   const base = BASE_THEMES.find((t) => t.id === config.baseThemeId) ?? BASE_THEMES[0];
   const accent = ACCENT_COLORS.find((a) => a.id === config.accentId) ?? ACCENT_COLORS[0];

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/context";
+import { useSidebarConfig } from "@/lib/sidebar/context";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { CommandPalette } from "@/components/shell/command-palette";
@@ -42,30 +43,9 @@ export const ALL_NAV_ITEMS = [
   { href: "/settings",      label: "Settings",      icon: Settings        },
 ] as const;
 
-export const SIDEBAR_STORAGE_KEY = "ld-sidebar-config";
-
-export type SidebarConfig = {
-  hidden: string[]; // hrefs that are hidden
-  order: string[];  // hrefs in display order (if empty, use default)
-};
-
-export function loadSidebarConfig(): SidebarConfig {
-  if (typeof window === "undefined") return { hidden: [], order: [] };
-  try {
-    const raw = localStorage.getItem(SIDEBAR_STORAGE_KEY);
-    if (!raw) return { hidden: [], order: [] };
-    return { hidden: [], order: [], ...JSON.parse(raw) };
-  } catch {
-    return { hidden: [], order: [] };
-  }
-}
-
-export function saveSidebarConfig(config: SidebarConfig): void {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(SIDEBAR_STORAGE_KEY, JSON.stringify(config));
-}
-
-function getOrderedVisibleItems(config: SidebarConfig) {
+function getOrderedVisibleItems(
+  config: { hidden: string[]; order: string[] }
+) {
   const allHrefs = ALL_NAV_ITEMS.map((n) => n.href);
   const orderedHrefs =
     config.order.length > 0
@@ -90,23 +70,7 @@ function NavLinks({
   onSearchOpen: () => void;
 }) {
   const pathname = usePathname();
-  const [sidebarConfig, setSidebarConfig] = useState<SidebarConfig>({ hidden: [], order: [] });
-
-  useEffect(() => {
-    setSidebarConfig(loadSidebarConfig());
-    function onStorage(e: StorageEvent) {
-      if (e.key === SIDEBAR_STORAGE_KEY) setSidebarConfig(loadSidebarConfig());
-    }
-    window.addEventListener("storage", onStorage);
-    // Also listen for custom events from settings page (same tab)
-    function onCustom() { setSidebarConfig(loadSidebarConfig()); }
-    window.addEventListener("ld-sidebar-update", onCustom);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("ld-sidebar-update", onCustom);
-    };
-  }, []);
-
+  const { sidebarConfig } = useSidebarConfig();
   const visibleItems = getOrderedVisibleItems(sidebarConfig);
 
   return (

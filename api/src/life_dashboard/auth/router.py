@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from life_dashboard.auth.dependencies import get_current_user
 from life_dashboard.auth.models import User
-from life_dashboard.auth.schemas import LoginRequest, LoginResponse, TokenResponse, UserResponse
+from life_dashboard.auth.schemas import LoginRequest, LoginResponse, TokenResponse, UpdateMeRequest, UserResponse
 from life_dashboard.auth.service import (
     AuthenticationError,
     TokenError,
@@ -100,4 +100,21 @@ async def logout(
 
 @router.get("/me", response_model=UserResponse)
 async def me(current_user: User = Depends(get_current_user)) -> UserResponse:
+    return UserResponse.model_validate(current_user)
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_me(
+    body: UpdateMeRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserResponse:
+    if body.display_name is not None:
+        current_user.display_name = body.display_name
+    if body.preferences is not None:
+        # Merge rather than replace so clients can update individual keys.
+        existing = current_user.preferences or {}
+        current_user.preferences = {**existing, **body.preferences}
+    await db.commit()
+    await db.refresh(current_user)
     return UserResponse.model_validate(current_user)

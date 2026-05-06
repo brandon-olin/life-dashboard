@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -18,7 +19,13 @@ class UserResponse(BaseModel):
     is_active: bool
     is_agent: bool
     last_login_at: datetime | None
+    preferences: dict[str, Any] | None
     created_at: datetime
+
+
+class UpdateMeRequest(BaseModel):
+    display_name: str | None = None
+    preferences: dict[str, Any] | None = None
 
 
 class TokenResponse(BaseModel):

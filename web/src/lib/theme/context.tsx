@@ -17,7 +17,7 @@ import {
 
 type ThemeContextValue = {
   config: ThemeConfig;
-  setConfig: (config: ThemeConfig) => void;
+  setConfig: (config: ThemeConfig, animate?: boolean) => void;
 };
 
 const ThemeContext = createContext<ThemeContextValue>({
@@ -32,18 +32,18 @@ export function ThemeCustomizerProvider({
 }) {
   const [config, setConfigState] = useState<ThemeConfig>(DEFAULT_CONFIG);
 
-  // On mount: load saved config and apply it immediately.
-  // Inline styles on <html> override both :root {} and .dark {} stylesheet rules.
+  // On mount: load saved config and apply immediately (no animation — avoids
+  // a flash before the CSS vars are in place).
   useEffect(() => {
     const saved = loadThemeConfig();
     setConfigState(saved);
-    applyThemeConfig(saved);
+    applyThemeConfig(saved, /* animate = */ false);
   }, []);
 
-  const setConfig = useCallback((next: ThemeConfig) => {
+  const setConfig = useCallback((next: ThemeConfig, animate = true) => {
     setConfigState(next);
     saveThemeConfig(next);
-    applyThemeConfig(next);
+    applyThemeConfig(next, animate);
   }, []);
 
   return (
