@@ -42,6 +42,15 @@ async def import_documents(
     )
 
 
+@router.delete("", status_code=http_status.HTTP_204_NO_CONTENT)
+async def delete_all_documents(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Hard-delete every document belonging to this household. Dev/testing only."""
+    await service.delete_all_documents(db, current_user.household_id)
+
+
 @router.get("", response_model=DocumentTreeResponse)
 async def list_documents(
     include_archived: bool = Query(default=False),

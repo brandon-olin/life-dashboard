@@ -146,14 +146,19 @@ html.theme-switching *::after {
 }
 
 /* ── BlockNote theme bridge ────────────────────────────────────────────────────
-   BlockNote uses its own --bn-colors-* custom properties. By setting them on
-   :root with !important, they take precedence over BlockNote's own class-level
-   declarations (.bn-root and .bn-root[data-color-scheme=dark]), keeping the
-   editor visually consistent with whichever app theme is active.
+   BlockNote's own style.css sets --bn-colors-* directly on .bn-root, which
+   beats any :root declaration because a direct declaration always wins over an
+   inherited value (even !important inherited values don't propagate through
+   direct declarations on descendant elements).
 
-   var(--background) etc resolve to whatever our theme system has set as inline
-   styles on <html>, so this updates automatically when the theme changes. */
-:root {
+   Fix: target .bn-root directly so we're overriding at the same specificity
+   level (and load order wins since globals.css is processed last). Also make
+   .bn-editor background transparent so the parent container's bg-background
+   class shows through — eliminating any remaining hardcoded white. */
+
+.bn-root,
+.bn-root[data-color-scheme="light"],
+.bn-root[data-color-scheme="dark"] {
   --bn-colors-editor-background: var(--background) !important;
   --bn-colors-editor-text: var(--foreground) !important;
   --bn-colors-menu-background: var(--card) !important;
@@ -169,4 +174,42 @@ html.theme-switching *::after {
   --bn-colors-shadow: var(--border) !important;
   --bn-colors-border: var(--border) !important;
   --bn-colors-side-menu: var(--muted-foreground) !important;
+}
+
+/* Belt-and-suspenders: make the editor surface itself transparent so the
+   parent div's bg-background always shows through regardless of BlockNote's
+   computed background-color value. */
+.bn-editor {
+  background-color: transparent !important;
+}
+
+/* ── Themed scrollbars ────────────────────────────────────────────────────────
+   Webkit (Chrome, Safari, Edge) scrollbars styled to match the active theme.
+   Firefox uses the standard scrollbar-color/scrollbar-width properties. */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted-foreground);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }

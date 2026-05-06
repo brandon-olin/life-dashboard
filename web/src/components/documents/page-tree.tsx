@@ -12,6 +12,7 @@ import {
   Plus,
   Loader2,
   Upload,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NotionImportDialog } from "@/components/documents/notion-import-dialog";
@@ -135,6 +136,8 @@ export function PageTree() {
   const qc = useQueryClient();
   const [isCreating, setIsCreating] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const { data, isLoading } = $api.useQuery("get", "/documents", {
     params: { query: { include_archived: false } },
@@ -164,6 +167,21 @@ export function PageTree() {
     }
   }
 
+  async function handleDeleteAll() {
+    setIsDeleting(true);
+    try {
+      const token = (await import("@/lib/auth/token")).getAccessToken();
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      await fetch("/api/documents", { method: "DELETE", headers, credentials: "same-origin" });
+      qc.invalidateQueries({ queryKey: ["get", "/documents"] });
+      router.push("/documents");
+    } finally {
+      setIsDeleting(false);
+      setDeleteConfirm(false);
+    }
+  }
+
   return (
     <>
     {showImport && <NotionImportDialog onClose={() => setShowImport(false)} />}
@@ -174,6 +192,34 @@ export function PageTree() {
           Documents
         </span>
         <div className="flex items-center gap-0.5">
+          {deleteConfirm ? (
+            <span className="flex items-center gap-1 text-xs text-destructive">
+              <button
+                className="underline underline-offset-2 hover:opacity-70"
+                onClick={handleDeleteAll}
+                disabled={isDeleting}
+              >
+                {isDeleting ? "Deleting…" : "Delete all?"}
+              </button>
+              <button
+                className="opacity-50 hover:opacity-100"
+                onClick={() => setDeleteConfirm(false)}
+                disabled={isDeleting}
+              >
+                ✕
+              </button>
+            </span>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground hover:text-destructive"
+              onClick={() => setDeleteConfirm(true)}
+              title="Delete all documents"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon"

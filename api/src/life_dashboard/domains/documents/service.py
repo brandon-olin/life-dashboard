@@ -2,7 +2,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from life_dashboard.domains.documents.models import Document
@@ -281,3 +281,14 @@ async def bulk_import_documents(
         skipped=skipped_count,
         items=[_to_summary(d) for d in created_docs],
     )
+
+
+async def delete_all_documents(
+    db: AsyncSession,
+    household_id: uuid.UUID,
+) -> None:
+    """Hard-delete all documents for a household. Intended for dev/test resets."""
+    await db.execute(
+        delete(Document).where(Document.household_id == household_id)
+    )
+    await db.commit()

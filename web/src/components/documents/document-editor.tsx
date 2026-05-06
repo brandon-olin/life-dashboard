@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useThemeCustomizer } from "@/lib/theme/context";
+import { isThemeDark } from "@/lib/theme/presets";
 import { $api } from "@/lib/api/query";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/shadcn";
@@ -15,6 +17,8 @@ type SaveState = "idle" | "saving" | "saved";
 // Inner component is keyed on documentId so it fully remounts on navigation.
 function EditorInner({ documentId }: { documentId: string }) {
   const qc = useQueryClient();
+  const { config } = useThemeCustomizer();
+  const bnTheme = isThemeDark(config) ? "dark" : "light";
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleRef = useRef<string>("");
@@ -142,7 +146,7 @@ function EditorInner({ documentId }: { documentId: string }) {
         <BlockNoteView
           editor={editor}
           onChange={scheduleSave}
-          theme="light"
+          theme={bnTheme}
         />
       </div>
     </div>

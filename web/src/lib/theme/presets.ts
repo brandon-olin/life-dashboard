@@ -412,3 +412,9 @@ export function applyThemeConfig(config: ThemeConfig, animate = true): void {
   root.style.setProperty("--radius", config.radius);
   root.style.setProperty("--font-sans", config.fontFamily);
 }
+
+/** Returns true when the currently-selected base palette is a dark theme. */
+export function isThemeDark(config: ThemeConfig): boolean {
+  const base = BASE_THEMES.find((t) => t.id === config.baseThemeId) ?? BASE_THEMES[0];
+  return base.category === "dark";
+}

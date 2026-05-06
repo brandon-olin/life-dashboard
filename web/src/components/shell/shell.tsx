@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useResizablePanel } from "@/lib/hooks/use-resizable-panel";
 import { useAuth } from "@/lib/auth/context";
 import { useSidebarConfig } from "@/lib/sidebar/context";
 import { Button } from "@/components/ui/button";
@@ -173,6 +174,12 @@ function SidebarContent({
 export function Shell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const { width: sidebarWidth, startResize } = useResizablePanel({
+    defaultWidth: 256,
+    minWidth: 180,
+    maxWidth: 380,
+    storageKey: "ld-sidebar-width",
+  });
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -188,9 +195,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-full">
       {/* Desktop sidebar */}
-      <aside className="hidden md:flex flex-col w-64 shrink-0 border-r bg-card">
+      <aside
+        className="hidden md:flex flex-col shrink-0 border-r bg-card"
+        style={{ width: sidebarWidth }}
+      >
         <SidebarContent onSearchOpen={() => setPaletteOpen(true)} />
       </aside>
+
+      {/* Sidebar resize handle */}
+      <div
+        className="hidden md:block w-1 shrink-0 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors"
+        onMouseDown={startResize}
+      />
 
       {/* Right column */}
       <div className="flex flex-col flex-1 min-w-0">
