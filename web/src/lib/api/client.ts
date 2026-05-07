@@ -18,4 +18,18 @@ apiClient.use({
     }
     return request;
   },
+  async onResponse({ request, response }) {
+    if (!response.ok) {
+      // Auth endpoints return 401/403 as normal control flow (e.g. no session
+      // yet on page load). Let the auth context handle those itself.
+      const url = new URL(request.url, "http://localhost");
+      if (url.pathname.startsWith("/api/auth/")) return;
+
+      // React Query v5 requires query functions to throw rather than return
+      // undefined. Throwing here ensures errors surface correctly instead of
+      // silently producing undefined data.
+      const text = await response.text().catch(() => response.statusText);
+      throw new Error(`${response.status}: ${text}`);
+    }
+  },
 });
