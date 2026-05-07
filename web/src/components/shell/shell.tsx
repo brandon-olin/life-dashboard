@@ -16,6 +16,7 @@ import {
   Target,
   Repeat,
   FileText,
+  BookOpen,
   Calendar,
   Users,
   ChefHat,
@@ -29,10 +30,13 @@ import {
 } from "lucide-react";
 
 // ── nav items ─────────────────────────────────────────────────────────────────
+// Settings lives in the sidebar footer; it is intentionally excluded from this
+// list so it doesn't appear in the main nav or the sidebar customizer.
 
 export const ALL_NAV_ITEMS = [
   { href: "/",              label: "Dashboard",     icon: LayoutDashboard },
   { href: "/documents",     label: "Documents",     icon: FileText        },
+  { href: "/notes",         label: "Notes",         icon: BookOpen        },
   { href: "/todos",         label: "Tasks",         icon: CheckSquare     },
   { href: "/habits",        label: "Habits",        icon: Repeat          },
   { href: "/goals",         label: "Goals",         icon: Target          },
@@ -41,7 +45,6 @@ export const ALL_NAV_ITEMS = [
   { href: "/grocery-lists", label: "Grocery Lists", icon: ShoppingCart    },
   { href: "/workouts",      label: "Workouts",      icon: Dumbbell        },
   { href: "/contacts",      label: "Contacts",      icon: Users           },
-  { href: "/settings",      label: "Settings",      icon: Settings        },
 ] as const;
 
 function getOrderedVisibleItems(
@@ -76,18 +79,25 @@ function NavLinks({
 
   return (
     <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
-      {/* Search trigger */}
-      <button
-        type="button"
-        onClick={() => { onNavigate?.(); onSearchOpen(); }}
-        className="flex items-center gap-3 w-full px-3 py-2 rounded-md text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
-      >
-        <Search className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-left">Search…</span>
-        <kbd className="text-xs bg-muted rounded px-1.5 py-0.5 font-mono leading-none">
-          ⌘P
-        </kbd>
-      </button>
+      {/* Search + Ask AI — compact icon row */}
+      <div className="flex items-center gap-0.5 mb-0.5">
+        <button
+          type="button"
+          onClick={() => { onNavigate?.(); onSearchOpen(); }}
+          title="Search (⌘P)"
+          className="flex-1 flex items-center justify-center h-8 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+        >
+          <Search className="h-4 w-4 shrink-0" />
+        </button>
+        <button
+          type="button"
+          disabled
+          title="Ask AI (coming soon)"
+          className="flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground opacity-40 cursor-not-allowed"
+        >
+          <MessageSquare className="h-4 w-4 shrink-0" />
+        </button>
+      </div>
 
       <div className="my-1 border-t" />
 
@@ -141,25 +151,45 @@ function SidebarContent({
 
       <NavLinks onNavigate={onNavigate} onSearchOpen={onSearchOpen} />
 
-      <div className="px-3 pb-5 pt-3 shrink-0 space-y-1 border-t mt-2">
-        <Button
-          variant="outline"
-          className="w-full justify-start gap-3"
-          disabled
-        >
-          <MessageSquare className="h-4 w-4 shrink-0" />
-          Ask AI
-        </Button>
+      {/* Footer — avatar → account settings | settings icon | logout */}
+      <div className="px-3 pb-4 pt-2 shrink-0 border-t mt-2">
+        <div className="flex items-center gap-1">
+          {/* Avatar — initials, links to Account section of settings */}
+          <button
+            type="button"
+            onClick={() => { onNavigate?.(); router.push("/settings"); }}
+            title={user?.display_name ?? user?.email ?? "Account settings"}
+            className="h-7 w-7 shrink-0 rounded-full bg-primary text-primary-foreground text-xs font-semibold flex items-center justify-center hover:opacity-80 transition-opacity cursor-pointer"
+          >
+            {(user?.display_name ?? user?.email ?? "?")
+              .trim()
+              .split(/\s+/)
+              .slice(0, 2)
+              .map((w: string) => w[0]?.toUpperCase() ?? "")
+              .join("")}
+          </button>
 
-        <div className="flex items-center justify-between px-3 py-1.5">
-          <span className="text-sm text-muted-foreground truncate">
-            {user?.display_name ?? user?.email}
-          </span>
+          <span className="flex-1" />
+
+          {/* Settings */}
           <Button
             variant="ghost"
             size="icon"
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            onClick={() => { onNavigate?.(); router.push("/settings"); }}
+            title="Settings"
+          >
+            <Settings className="h-4 w-4" />
+          </Button>
+
+          {/* Logout */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
             onClick={handleLogout}
             aria-label="Log out"
+            title="Log out"
           >
             <LogOut className="h-4 w-4" />
           </Button>

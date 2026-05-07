@@ -31,6 +31,7 @@ class Document(Base):
     title: Mapped[str] = mapped_column(Text)
     slug: Mapped[str] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
+    icon: Mapped[str | None] = mapped_column(Text)
     kind: Mapped[str] = mapped_column(
         SaEnum("page", "template", name="document_kind", create_type=False),
         default="page",

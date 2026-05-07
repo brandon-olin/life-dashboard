@@ -12,6 +12,7 @@ from life_dashboard.domains.documents.router import router as documents_router
 from life_dashboard.domains.goals.router import router as goals_router
 from life_dashboard.domains.grocery_lists.router import router as grocery_lists_router
 from life_dashboard.domains.habits.router import router as habits_router
+from life_dashboard.domains.notes.router import router as notes_router
 from life_dashboard.domains.recipes.router import router as recipes_router
 from life_dashboard.domains.tags.router import router as tags_router
 from life_dashboard.domains.todos.router import router as todos_router
@@ -79,6 +80,7 @@ app.include_router(documents_router)
 app.include_router(goals_router)
 app.include_router(grocery_lists_router)
 app.include_router(habits_router)
+app.include_router(notes_router)
 app.include_router(recipes_router)
 app.include_router(tags_router)
 app.include_router(todos_router)

@@ -351,6 +351,8 @@ export type ThemeConfig = {
   accentId: string;
   radius: string;
   fontFamily: string;
+  /** Per-variable overrides applied on top of the preset. Keys are CSS var names like "--background". */
+  customVars?: Record<string, string>;
 };
 
 export const DEFAULT_CONFIG: ThemeConfig = {
@@ -358,7 +360,23 @@ export const DEFAULT_CONFIG: ThemeConfig = {
   accentId: "neutral",
   radius: "0.625rem",
   fontFamily: "var(--font-geist-sans), sans-serif",
+  customVars: {},
 };
+
+// The CSS variables that are surfaced in the per-variable color picker.
+export const CUSTOM_VAR_OPTIONS: { key: string; label: string }[] = [
+  { key: "--background",       label: "Background"       },
+  { key: "--foreground",       label: "Foreground"       },
+  { key: "--card",             label: "Card"             },
+  { key: "--primary",          label: "Primary"          },
+  { key: "--primary-foreground", label: "Primary text"   },
+  { key: "--muted",            label: "Muted surface"    },
+  { key: "--muted-foreground", label: "Muted text"       },
+  { key: "--accent",           label: "Accent surface"   },
+  { key: "--border",           label: "Border"           },
+  { key: "--ring",             label: "Focus ring"       },
+  { key: "--sidebar",          label: "Sidebar"          },
+];
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 
@@ -411,6 +429,10 @@ export function applyThemeConfig(config: ThemeConfig, animate = true): void {
   // Radius and font
   root.style.setProperty("--radius", config.radius);
   root.style.setProperty("--font-sans", config.fontFamily);
+  // Per-variable overrides — applied last so they win over preset + accent
+  for (const [k, v] of Object.entries(config.customVars ?? {})) {
+    if (v) root.style.setProperty(k, v);
+  }
 }
 
 /** Returns true when the currently-selected base palette is a dark theme. */

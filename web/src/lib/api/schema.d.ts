@@ -981,6 +981,8 @@ export interface components {
             title: string;
             /** Description */
             description?: string | null;
+            /** Icon */
+            icon?: string | null;
             /**
              * Kind
              * @default page
@@ -1016,6 +1018,8 @@ export interface components {
             slug: string;
             /** Description */
             description: string | null;
+            /** Icon */
+            icon: string | null;
             /**
              * Kind
              * @enum {string}
@@ -1058,6 +1062,8 @@ export interface components {
             slug: string;
             /** Description */
             description: string | null;
+            /** Icon */
+            icon: string | null;
             /**
              * Kind
              * @enum {string}
@@ -1094,6 +1100,8 @@ export interface components {
             client_parent_id?: string | null;
             /** Title */
             title: string;
+            /** Icon */
+            icon?: string | null;
             /** Source Markdown */
             source_markdown?: string | null;
             /** Editor Json */
@@ -1123,6 +1131,8 @@ export interface components {
             title?: string | null;
             /** Description */
             description?: string | null;
+            /** Icon */
+            icon?: string | null;
             /** Kind */
             kind?: ("page" | "template") | null;
             /** Source Markdown */

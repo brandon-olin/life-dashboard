@@ -9,7 +9,26 @@ import { SidebarConfigProvider } from "./sidebar/context";
 import { PreferencesSyncer } from "./preferences-syncer";
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  const [queryClient] = useState(() => new QueryClient());
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            // The API client middleware handles one silent token-refresh retry
+            // on 401. Don't let React Query pile on additional retries.
+            retry: (failureCount, error) => {
+              if (
+                error instanceof Error &&
+                (error.message.startsWith("401:") ||
+                  error.message.startsWith("403:"))
+              )
+                return false;
+              return failureCount < 2;
+            },
+          },
+        },
+      }),
+  );
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>

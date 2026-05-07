@@ -1,7 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
+
+// Module-level set: survives component unmounts when navigating between sections.
+// Stores IDs of all nodes the user has explicitly expanded.
+const _expandedIds = new Set<string>();
 import { $api } from "@/lib/api/query";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -59,8 +63,21 @@ function TreeNodeRow({
 }) {
   const router = useRouter();
   const isActive = activePath === `/documents/${node.doc.id}`;
-  const [expanded, setExpanded] = useState(false);
+  // Read initial state from the module-level set so state persists across unmounts.
+  const [expanded, setExpanded] = useState(() => _expandedIds.has(node.doc.id));
   const hasChildren = node.children.length > 0;
+
+  const toggle = useCallback(() => {
+    setExpanded((v) => {
+      const next = !v;
+      if (next) {
+        _expandedIds.add(node.doc.id);
+      } else {
+        _expandedIds.delete(node.doc.id);
+      }
+      return next;
+    });
+  }, [node.doc.id]);
 
   return (
     <li>
@@ -80,7 +97,7 @@ function TreeNodeRow({
           className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground shrink-0"
           onClick={(e) => {
             e.stopPropagation();
-            setExpanded((v) => !v);
+            toggle();
           }}
         >
           {hasChildren ? (
@@ -94,7 +111,11 @@ function TreeNodeRow({
           )}
         </button>
 
-        <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        {node.doc.icon ? (
+          <span className="shrink-0 text-sm leading-none">{node.doc.icon}</span>
+        ) : (
+          <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        )}
 
         <span className="flex-1 min-w-0 truncate py-1.5 text-sm">
           {node.doc.title || "Untitled"}
@@ -227,7 +248,10 @@ export function PageTree() {
             variant="ghost"
             size="icon"
             className="h-6 w-6"
-            onClick={() => setCollapseKey((k) => k + 1)}
+            onClick={() => {
+              _expandedIds.clear();
+              setCollapseKey((k) => k + 1);
+            }}
             title="Collapse all"
           >
             <SquareMinus className="h-3.5 w-3.5" />

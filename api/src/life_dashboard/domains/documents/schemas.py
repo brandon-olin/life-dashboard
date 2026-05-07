@@ -11,6 +11,7 @@ class DocumentCreate(BaseModel):
     parent_id: uuid.UUID | None = None
     title: str = Field(min_length=1)
     description: str | None = None
+    icon: str | None = None
     kind: DocumentKind = "page"
     source_markdown: str | None = None
     editor_json: dict[str, Any] | None = None
@@ -20,6 +21,7 @@ class DocumentUpdate(BaseModel):
     parent_id: uuid.UUID | None = None
     title: str | None = Field(default=None, min_length=1)
     description: str | None = None
+    icon: str | None = None
     kind: DocumentKind | None = None
     source_markdown: str | None = None
     editor_json: dict[str, Any] | None = None
@@ -35,6 +37,7 @@ class DocumentResponse(BaseModel):
     title: str
     slug: str
     description: str | None
+    icon: str | None
     kind: DocumentKind
     source_markdown: str | None
     editor_json: dict[str, Any] | None
@@ -52,6 +55,7 @@ class DocumentSummary(BaseModel):
     title: str
     slug: str
     description: str | None
+    icon: str | None
     kind: DocumentKind
     archived_at: datetime | None
     created_at: datetime
@@ -80,6 +84,7 @@ class DocumentImportItem(BaseModel):
     client_id: str = Field(min_length=1)
     client_parent_id: str | None = None
     title: str = Field(min_length=1)
+    icon: str | None = None
     source_markdown: str | None = None
     editor_json: dict[str, Any] | None = None
 

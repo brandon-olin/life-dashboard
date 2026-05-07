@@ -74,6 +74,7 @@ async def create_document(
         title=data.title,
         slug=slug,
         description=data.description,
+        icon=data.icon,
         kind=data.kind,
         source_markdown=data.source_markdown,
         editor_json=data.editor_json,
@@ -139,7 +140,7 @@ async def update_document(
         doc.title = data.title
         doc.slug = await _unique_slug(db, household_id, _slugify(data.title))
 
-    for field in ("parent_id", "description", "kind"):
+    for field in ("parent_id", "description", "icon", "kind"):
         if field in sent:
             setattr(doc, field, getattr(data, field))
 
@@ -267,6 +268,7 @@ async def bulk_import_documents(
             parent_id=parent_db_id,
             title=item.title,
             slug=slug,
+            icon=item.icon,
             kind="page",
             source_markdown=item.source_markdown,
             editor_json=item.editor_json,

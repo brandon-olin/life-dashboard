@@ -1,27 +1,30 @@
 "use client";
 
 /**
- * Markdown import dialog.
+ * Markdown + HTML import dialog.
  *
- * Accepts a zip of markdown files (Notion, Obsidian, Bear, Logseq, …),
+ * Accepts a zip of markdown or HTML files (Notion, Obsidian, Bear, Logseq, …),
  * reconstructs page hierarchy from the folder structure, strips unresolvable
  * image references, and bulk-POSTs to POST /documents/bulk-import.
  *
- * Three Notion-specific fixes applied during parse:
- *   1. Database-row pages (every line is "key: value") are filtered out.
- *   2. Stub parent pages are auto-created for folders with no matching .md file.
- *   3. Inter-page links ([text](Page hexid.md)) are rewritten to internal
- *      /documents/{uuid} links via a post-import PATCH pass.
+ * Prefers .html files over .md when both exist for the same page stem (as in
+ * Notion's HTML export), because the HTML export preserves toggle lists.
  *
- * Notion export structure:
- *   Export-<date>/
- *     Page Title <32-hex>.md
- *     Page Title <32-hex>/
- *       Sub Page <32-hex>.md
+ * Notion-specific fixes applied during parse:
+ *   1. Database-row pages (every line is "key: value") are converted to stubs.
+ *   2. Stub parent pages are auto-created for folders with no matching file.
+ *   3. Inter-page links ([text](Page hexid.md)) are rewritten to internal
+ *      /documents/{uuid} links via a post-import PATCH pass (MD only).
+ *   4. Page icons (emoji) are extracted from HTML or MD and stored on the doc.
+ *
+ * Notion export structures:
+ *   "Markdown & CSV" → Page Title <32-hex>.md
+ *   "HTML"           → Page Title <32-hex>.html  (preserves toggles, icons)
  */
 
 import { useRef, useState } from "react";
 import JSZip from "jszip";
+import { BlockNoteEditor } from "@blocknote/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { getAccessToken } from "@/lib/auth/token";
 import { Upload, Loader2, CheckCircle2, AlertCircle, X } from "lucide-react";
@@ -33,7 +36,12 @@ interface ParsedPage {
   clientId: string;
   clientParentId: string | null;
   title: string;
+  /** source_markdown content; empty string for stubs or HTML-only pages. */
   markdown: string;
+  /** editor_json blocks from BlockNote HTML parsing. */
+  editorJson?: unknown;
+  /** Emoji icon from the page header, if present. */
+  icon?: string | null;
 }
 
 type ImportState =
@@ -49,21 +57,25 @@ interface ImportResultItem {
   client_id: string;
 }
 
+// ── Emoji helpers ─────────────────────────────────────────────────────────────
+
+// Matches a single emoji codepoint (or ZWJ sequence). Used to detect icon lines.
+const EMOJI_RE =
+  /^(?:\p{Emoji_Presentation}|\p{Emoji}️)(?:‍(?:\p{Emoji_Presentation}|\p{Emoji}️))*\s*$/u;
+
+function isEmojiOnly(text: string): boolean {
+  return EMOJI_RE.test(text.trim());
+}
+
 // ── Markdown helpers ──────────────────────────────────────────────────────────
 
-/**
- * Remove image tags whose src is a local path (no http/https scheme).
- * Notion embeds images as relative paths like `![](image.png)` that will
- * never resolve outside the export.
- */
 function stripLocalImages(md: string): string {
   return md.replace(/!\[[^\]]*\]\((?!https?:\/\/|data:|ftp:\/\/)[^)]*\)/g, "");
 }
 
 /**
- * Fix 1 — Returns true when the entire file content looks like a Notion
- * database row (every non-blank line follows "Key: value" format with no prose
- * content). These are noise from Notion's "Markdown & CSV" export format.
+ * Returns true when the entire file content looks like a Notion database row
+ * (every non-blank line follows "Key: value" format with no prose content).
  */
 function isDatabaseRow(markdown: string): boolean {
   const lines = markdown.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -73,14 +85,8 @@ function isDatabaseRow(markdown: string): boolean {
 }
 
 /**
- * Fix 3 — Rewrites Notion inter-page links.
- *
- * Notion exports links as `[Title](Page%20Title%20hexid.md)`. We replace
- * those with `[Title](DOCREF:clientId)` placeholders so we can resolve them
- * to real /documents/{uuid} URLs after the import API returns real IDs.
- *
- * Unresolvable links (target not in the import set) are degraded to plain
- * `[Title]` text so the page is still readable.
+ * Rewrites Notion inter-page links to DOCREF: placeholders for post-import
+ * resolution to real /documents/{uuid} URLs.
  */
 function rewriteNotionLinks(
   md: string,
@@ -96,15 +102,89 @@ function rewriteNotionLinks(
   );
 }
 
-// ── Notion filename helpers ───────────────────────────────────────────────────
+/**
+ * Try to extract a leading emoji icon from a markdown file.
+ * Notion MD exports sometimes begin with just an emoji line before the heading.
+ */
+function parseIconFromMarkdown(md: string): string | null {
+  const firstLine = md.split("\n").find((l) => l.trim().length > 0);
+  if (!firstLine) return null;
+  const trimmed = firstLine.trim();
+  // Must be an emoji-only line (not a heading or paragraph)
+  if (!trimmed.startsWith("#") && isEmojiOnly(trimmed)) return trimmed;
+  return null;
+}
+
+// ── HTML helpers ──────────────────────────────────────────────────────────────
 
 /**
- * Notion-generated system pages that should never be imported.
- * Matched case-insensitively against the resolved title.
+ * Extracts the page icon emoji from Notion HTML.
+ * Notion puts the icon in elements with class containing "page-icon" or "icon".
  */
+function parseIconFromHtml(html: string): string | null {
+  // Try <p class="page-icon">🔥</p> or <figure class="page-icon">🔥</figure>
+  const iconEl = html.match(
+    /<(?:p|figure|div|span)[^>]+class="[^"]*(?:page[-_]icon|icon)[^"]*"[^>]*>\s*([^\n<]{1,10})\s*<\/(?:p|figure|div|span)>/i,
+  );
+  if (iconEl) {
+    const candidate = iconEl[1].trim();
+    if (isEmojiOnly(candidate)) return candidate;
+  }
+
+  // Fallback: check for <link rel="icon" ...> with emoji-like content
+  const linkIcon = html.match(/<link[^>]+rel="icon"[^>]+href="([^"]+)"/i);
+  if (linkIcon) {
+    const href = linkIcon[1];
+    // emoji are sometimes base64-encoded SVG or plain text — skip non-emoji
+    if (isEmojiOnly(href)) return href.trim();
+  }
+  return null;
+}
+
+/**
+ * Extracts the body content from a Notion HTML page for BlockNote parsing.
+ * Strips the title heading so it doesn't duplicate the page title.
+ */
+function extractNotionHtmlBody(html: string): string {
+  // Prefer the dedicated page-body div
+  const bodyMatch = html.match(
+    /<div[^>]+class="[^"]*page-body[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/article>/i,
+  );
+  if (bodyMatch) return bodyMatch[1];
+
+  // Fallback: strip <head>, then strip the first <h1> (the title)
+  const bodyTag = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  const bodyContent = bodyTag ? bodyTag[1] : html;
+  return bodyContent.replace(/<h1[^>]*>[\s\S]*?<\/h1>/i, "").trim();
+}
+
+// Singleton parser editor — created lazily, reused across all pages.
+// BlockNoteEditor.create() is safe to call in the browser without mounting.
+let _parseEditor: BlockNoteEditor | null = null;
+
+function getParseEditor(): BlockNoteEditor {
+  if (!_parseEditor) {
+    _parseEditor = BlockNoteEditor.create();
+  }
+  return _parseEditor;
+}
+
+async function parseHtmlPage(
+  html: string,
+): Promise<{ editorJson: unknown; icon: string | null }> {
+  const icon = parseIconFromHtml(html);
+  const bodyHtml = extractNotionHtmlBody(html);
+  const editor = getParseEditor();
+  const blocks = editor.tryParseHTMLToBlocks(bodyHtml);
+  return { editorJson: { blocks }, icon };
+}
+
+// ── Notion filename helpers ───────────────────────────────────────────────────
+
 const NOTION_SYSTEM_PAGE_TITLES = new Set([
   "home",
   "teamspace home",
+  "people",
 ]);
 
 const NOTION_UUID_RE = /\s+[0-9a-f]{32}$/i;
@@ -116,23 +196,25 @@ function stripNotionId(name: string): string {
 function parseTitleFromPath(filePath: string): string {
   const segments = filePath.split("/");
   const filename = segments[segments.length - 1];
-  const withoutExt = filename.replace(/\.md$/i, "");
+  // Strip any known extension
+  const withoutExt = filename.replace(/\.(md|html?)$/i, "");
   return stripNotionId(withoutExt) || "Untitled";
 }
 
 /**
  * Normalises a file path by stripping Notion UUIDs from every segment.
- *
- *   "Export/My Page abc123/Sub Page def456.md"
- *   → "Export/My Page/Sub Page.md"
+ * Preserves the file extension (.md or .html) on the last segment.
  */
 function normalisePath(filePath: string): string {
   return filePath
     .split("/")
     .map((seg, i, arr) => {
       const isLast = i === arr.length - 1;
-      if (isLast && seg.toLowerCase().endsWith(".md")) {
-        return stripNotionId(seg.replace(/\.md$/i, "")) + ".md";
+      if (isLast) {
+        const htmlMatch = seg.match(/^(.+)(\.html?)$/i);
+        if (htmlMatch) return stripNotionId(htmlMatch[1]) + htmlMatch[2].toLowerCase();
+        const mdMatch = seg.match(/^(.+)(\.md)$/i);
+        if (mdMatch) return stripNotionId(mdMatch[1]) + ".md";
       }
       return stripNotionId(seg);
     })
@@ -140,73 +222,133 @@ function normalisePath(filePath: string): string {
     .join("/");
 }
 
-// ── Zip parser ────────────────────────────────────────────────────────────────
+// ── Zip file collector ────────────────────────────────────────────────────────
 
-async function collectMdFiles(
+interface ZipFile {
+  path: string;
+  file: JSZip.JSZipObject;
+}
+
+async function collectFiles(
   zip: JSZip,
-  acc: Array<{ path: string; file: JSZip.JSZipObject }>,
+  md: ZipFile[],
+  html: ZipFile[],
 ): Promise<void> {
   const innerZips: JSZip.JSZipObject[] = [];
 
   zip.forEach((relativePath, zipEntry) => {
     if (zipEntry.dir || relativePath.startsWith("__MACOSX")) return;
-    if (relativePath.toLowerCase().endsWith(".zip")) {
+    const lower = relativePath.toLowerCase();
+    if (lower.endsWith(".zip")) {
       innerZips.push(zipEntry);
-    } else if (relativePath.toLowerCase().endsWith(".md")) {
-      acc.push({ path: relativePath, file: zipEntry });
+    } else if (lower.endsWith(".md")) {
+      md.push({ path: relativePath, file: zipEntry });
+    } else if (lower.endsWith(".html") || lower.endsWith(".htm")) {
+      html.push({ path: relativePath, file: zipEntry });
     }
   });
 
   for (const innerEntry of innerZips) {
     const innerData = await innerEntry.async("arraybuffer");
     const innerZip = await JSZip.loadAsync(innerData);
-    await collectMdFiles(innerZip, acc);
+    await collectFiles(innerZip, md, html);
   }
 }
 
-/**
- * Fix 2 — Returns all ancestor dir paths (at depth ≥ 2) that are needed as
- * parents. We skip depth-1 paths because those are always the export root
- * wrapper ("Export abc123/") — not a real page.
- */
+// ── Ancestor stub helpers ─────────────────────────────────────────────────────
+
 function expandNeededAncestors(normDir: string): string[] {
   const parts = normDir.split("/");
   const result: string[] = [];
-  // i=1 would be depth 1 (export root) — skip it; start from i=2 (depth 2).
   for (let i = 2; i <= parts.length; i++) {
     result.push(parts.slice(0, i).join("/"));
   }
   return result;
 }
 
+// ── Main parser ───────────────────────────────────────────────────────────────
+
 async function parseNotionZip(file: File): Promise<ParsedPage[]> {
   const zip = await JSZip.loadAsync(file);
 
-  const mdFiles: Array<{ path: string; file: JSZip.JSZipObject }> = [];
-  await collectMdFiles(zip, mdFiles);
+  const mdFiles: ZipFile[] = [];
+  const htmlFiles: ZipFile[] = [];
+  await collectFiles(zip, mdFiles, htmlFiles);
 
-  // Assign stable client IDs to every .md file.
-  const normalised: Array<{ path: string; norm: string; id: string }> =
-    mdFiles.map((f, i) => ({
-      path: f.path,
-      norm: normalisePath(f.path),
-      id: `import-${i}`,
-    }));
+  // ── Normalise all files and build stem maps ────────────────────────────────
+  // normalised stem (without extension) → file entry, preferring HTML over MD
+  // when both exist for the same page.
 
-  // dirToId: normalised dir stem → clientId
-  // Seeded from .md files — "Export/My Page.md" contributes stem "Export/My Page".
-  const dirToId = new Map<string, string>();
-  for (const entry of normalised) {
-    const stem = entry.norm.replace(/\.md$/i, "");
-    dirToId.set(stem, entry.id);
+  interface FileEntry {
+    path: string;
+    file: JSZip.JSZipObject;
+    ext: "md" | "html";
+    id: string;
   }
 
-  // Fix 2 — Collect all ancestor dirs that files need as parents, then create
-  // stub pages for any that aren't already covered by a real .md file.
+  // Build normalised entries for MD files
+  const mdEntries: FileEntry[] = mdFiles.map((f, i) => ({
+    path: f.path,
+    file: f.file,
+    ext: "md",
+    id: `import-${i}`,
+  }));
+
+  // Build normalised entries for HTML files (offset IDs past MD range)
+  const htmlEntries: FileEntry[] = htmlFiles.map((f, i) => ({
+    path: f.path,
+    file: f.file,
+    ext: "html",
+    id: `import-h-${i}`,
+  }));
+
+  // For each normalised stem, prefer HTML entry over MD entry.
+  // stemToEntry maps: normStem → winning FileEntry
+  const stemToEntry = new Map<string, FileEntry>();
+
+  for (const entry of mdEntries) {
+    const norm = normalisePath(entry.path);
+    const stem = norm.replace(/\.md$/i, "");
+    stemToEntry.set(stem, { ...entry, id: `import-${mdEntries.indexOf(entry)}` });
+  }
+  for (const entry of htmlEntries) {
+    const norm = normalisePath(entry.path);
+    const stem = norm.replace(/\.html?$/i, "");
+    // HTML wins over MD — always overwrite
+    stemToEntry.set(stem, { ...entry });
+  }
+
+  // Final ordered list: re-assign sequential IDs for determinism
+  const entries: Array<FileEntry & { norm: string; stem: string }> = [];
+  let idx = 0;
+  for (const [stem, entry] of stemToEntry) {
+    const norm = stem + (entry.ext === "html" ? ".html" : ".md");
+    entries.push({ ...entry, id: `import-${idx++}`, norm, stem });
+  }
+
+  // ── Build dirToId and hexToClientId ───────────────────────────────────────
+  const dirToId = new Map<string, string>();
+  const hexToClientId = new Map<string, string>(); // for MD link rewriting
+
+  for (const entry of entries) {
+    dirToId.set(entry.stem, entry.id);
+  }
+
+  // Hex IDs from original MD paths (for link rewriting)
+  for (const f of mdFiles) {
+    const hexMatch = f.path.match(/([0-9a-f]{32})\.md$/i);
+    if (!hexMatch) continue;
+    const norm = normalisePath(f.path);
+    const stem = norm.replace(/\.md$/i, "");
+    const clientId = dirToId.get(stem);
+    if (clientId) hexToClientId.set(hexMatch[1].toLowerCase(), clientId);
+  }
+
+  // ── Stub ancestors ────────────────────────────────────────────────────────
   const allNeeded = new Set<string>();
-  for (const entry of normalised) {
-    const parts = entry.norm.split("/");
-    parts.pop(); // remove filename segment
+  for (const entry of entries) {
+    const parts = entry.stem.split("/");
+    parts.pop();
     const parentDir = parts.join("/");
     if (parentDir) {
       for (const ancestor of expandNeededAncestors(parentDir)) {
@@ -215,74 +357,67 @@ async function parseNotionZip(file: File): Promise<ParsedPage[]> {
     }
   }
 
-  // Sort shallow-first so parent stubs are added to dirToId before children.
   const sortedNeeded = [...allNeeded].sort(
     (a, b) => a.split("/").length - b.split("/").length,
   );
 
-  let stubIdx = mdFiles.length;
+  let stubIdx = entries.length;
   const stubPages: ParsedPage[] = [];
 
   for (const normDir of sortedNeeded) {
-    if (dirToId.has(normDir)) continue; // already covered by a real .md file
-
+    if (dirToId.has(normDir)) continue;
     const stubId = `import-stub-${stubIdx++}`;
     const title = normDir.split("/").pop() || "Untitled";
-
     const normParts = normDir.split("/");
     normParts.pop();
     const parentNorm = normParts.join("/");
-    // Depth-1 parent ("Export") won't be in dirToId — resolves to null (root).
     const clientParentId = parentNorm ? (dirToId.get(parentNorm) ?? null) : null;
-
     dirToId.set(normDir, stubId);
     stubPages.push({ clientId: stubId, clientParentId, title, markdown: "" });
   }
 
-  // Fix 3 — Build hexId → clientId map for link rewriting.
-  const hexToClientId = new Map<string, string>();
-  for (const entry of normalised) {
-    const hexMatch = entry.path.match(/([0-9a-f]{32})\.md$/i);
-    if (hexMatch) hexToClientId.set(hexMatch[1].toLowerCase(), entry.id);
-  }
-
-  // Read and process each .md file.
+  // ── Process each page ─────────────────────────────────────────────────────
   const pages: ParsedPage[] = [];
-  for (let i = 0; i < mdFiles.length; i++) {
-    const { path, file } = mdFiles[i];
-    const { norm, id } = normalised[i];
 
-    // Resolve parent before any filtering so stubs get the correct clientParentId.
-    const normParts = norm.split("/");
-    normParts.pop();
-    const parentDir = normParts.join("/");
-    const clientParentId = parentDir ? (dirToId.get(parentDir) ?? null) : null;
+  for (const entry of entries) {
+    // Resolve parent
+    const stemParts = entry.stem.split("/");
+    stemParts.pop();
+    const parentStem = stemParts.join("/");
+    const clientParentId = parentStem ? (dirToId.get(parentStem) ?? null) : null;
 
-    const title = parseTitleFromPath(path);
+    const title = parseTitleFromPath(entry.path);
 
-    // Filter Notion-generated system pages entirely (Home, Teamspace Home, etc.).
-    // Their children are reparented to root because these containers aren't part
-    // of the user's content tree.
     if (NOTION_SYSTEM_PAGE_TITLES.has(title.toLowerCase())) continue;
 
-    const raw = await file.async("string");
-    const stripped = stripLocalImages(raw);
+    if (entry.ext === "html") {
+      // ── HTML page ──────────────────────────────────────────────────────────
+      const raw = await entry.file.async("string");
+      const { editorJson, icon } = await parseHtmlPage(raw);
+      pages.push({
+        clientId: entry.id,
+        clientParentId,
+        title,
+        markdown: "",
+        editorJson,
+        icon,
+      });
+    } else {
+      // ── Markdown page ──────────────────────────────────────────────────────
+      const raw = await entry.file.async("string");
+      const stripped = stripLocalImages(raw);
 
-    // Fix 1 — database-row pages become empty stubs instead of being skipped.
-    // Skipping would leave their clientId in dirToId without a corresponding
-    // upload entry, causing all children of that page to land at root.
-    if (isDatabaseRow(stripped)) {
-      pages.push({ clientId: id, clientParentId, title, markdown: "" });
-      continue;
+      if (isDatabaseRow(stripped)) {
+        pages.push({ clientId: entry.id, clientParentId, title, markdown: "" });
+        continue;
+      }
+
+      const icon = parseIconFromMarkdown(stripped);
+      const markdown = rewriteNotionLinks(stripped, hexToClientId);
+      pages.push({ clientId: entry.id, clientParentId, title, markdown, icon });
     }
-
-    // Fix 3 — rewrite Notion inter-page links to DOCREF: placeholders.
-    const markdown = rewriteNotionLinks(stripped, hexToClientId);
-
-    pages.push({ clientId: id, clientParentId, title, markdown });
   }
 
-  // Stubs first so parent rows exist before children in the upload payload.
   return [...stubPages, ...pages];
 }
 
@@ -301,27 +436,27 @@ export function NotionImportDialog({ onClose }: Props) {
     if (!file.name.toLowerCase().endsWith(".zip")) {
       setState({
         phase: "error",
-        message: "Please select a .zip file containing markdown pages.",
+        message: "Please select a .zip file containing pages.",
       });
       return;
     }
 
     try {
-      // 1. Parse the zip.
       setState({ phase: "parsing" });
       const pages = await parseNotionZip(file);
 
-      const realPages = pages.filter((p) => p.markdown !== "" || p.clientId.startsWith("import-stub"));
+      const realPages = pages.filter(
+        (p) => p.markdown !== "" || p.editorJson !== undefined || p.clientId.startsWith("import-stub"),
+      );
       if (realPages.length === 0) {
         setState({
           phase: "error",
           message:
-            "No markdown pages found in this zip. Check the browser console (⌘⌥J) for detected paths.",
+            "No pages found in this zip. Check the browser console (⌘⌥J) for detected paths.",
         });
         return;
       }
 
-      // 2. POST to bulk-import API.
       setState({ phase: "uploading" });
 
       const token = getAccessToken();
@@ -339,8 +474,9 @@ export function NotionImportDialog({ onClose }: Props) {
             client_id: p.clientId,
             client_parent_id: p.clientParentId,
             title: p.title,
+            icon: p.icon ?? null,
             source_markdown: p.markdown || null,
-            editor_json: null,
+            editor_json: p.editorJson ?? null,
           })),
         }),
       });
@@ -356,7 +492,7 @@ export function NotionImportDialog({ onClose }: Props) {
         items: ImportResultItem[];
       };
 
-      // 3. Fix 3 — Resolve DOCREF: placeholders in pages that had links.
+      // Fix 3 — Resolve DOCREF: placeholders in MD pages that had links.
       const pagesWithLinks = pages.filter((p) => p.markdown.includes("DOCREF:"));
 
       if (pagesWithLinks.length > 0) {
@@ -439,11 +575,11 @@ export function NotionImportDialog({ onClose }: Props) {
         {state.phase === "idle" && (
           <div className="text-sm text-muted-foreground space-y-2">
             <p>
-              Upload a zip of markdown files. Page hierarchy is inferred from
-              folder structure. Works with exports from:
+              Upload a zip of pages. Hierarchy is inferred from folder
+              structure. Notion&rsquo;s HTML export preserves toggle lists and page icons.
             </p>
             <ul className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs pl-1">
-              <li>• Notion <span className="text-muted-foreground/60">(Markdown &amp; CSV)</span></li>
+              <li>• Notion <span className="text-muted-foreground/60">(HTML or Markdown)</span></li>
               <li>• Obsidian</li>
               <li>• Logseq</li>
               <li>• Bear</li>
@@ -486,7 +622,7 @@ export function NotionImportDialog({ onClose }: Props) {
           </div>
         )}
 
-        {/* Progress states */}
+        {/* Progress */}
         {state.phase === "parsing" && (
           <ProgressRow icon={<Loader2 className="h-4 w-4 animate-spin" />} label="Reading zip…" />
         )}
