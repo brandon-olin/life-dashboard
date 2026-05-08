@@ -311,6 +311,37 @@ async def delete_all_documents(
 _SNIPPET_CONTEXT = 60  # characters of context around a body match
 
 
+def _extract_plain_text(editor_json: "dict | list | None") -> str:
+    """Recursively extract raw text from a BlockNote / ProseMirror JSON blob.
+
+    Used to generate search snippets for documents that have no source_markdown.
+    Mirrors the logic in ai/tools.py but kept here to avoid a cross-domain import.
+    """
+    if not editor_json:
+        return ""
+
+    def _inline(node: dict) -> str:
+        if not isinstance(node, dict):
+            return ""
+        if node.get("type") == "text":
+            return node.get("text", "")
+        if node.get("type") == "link":
+            return "".join(_inline(i) for i in node.get("content", []))
+        return ""
+
+    def _block(block: dict) -> str:
+        if not isinstance(block, dict):
+            return ""
+        line = "".join(_inline(i) for i in block.get("content", []))
+        children = " ".join(filter(None, [_block(c) for c in block.get("children", [])]))
+        return " ".join(filter(None, [line, children]))
+
+    blocks: list = editor_json if isinstance(editor_json, list) else (
+        editor_json.get("content") or editor_json.get("blocks") or []
+    )
+    return "\n".join(filter(None, [_block(b) for b in blocks]))
+
+
 def _make_snippet(text: str, term: str) -> str:
     """Return a short excerpt around the first occurrence of term in text."""
     pos = text.lower().find(term.lower())
@@ -334,15 +365,22 @@ async def search_documents(
     limit: int = 20,
     offset: int = 0,
 ) -> DocumentSearchResponse:
-    """Search documents by title and body (source_markdown).
+    """Search documents by title and body (source_markdown or editor_json text).
 
     Priority order:
       1. Title exact match (case-insensitive)
       2. Title contains match
-      3. Body (source_markdown) contains match
+      3. Body (source_markdown or editor_json cast to text) contains match
 
     Returns up to limit+1 items so the caller can determine has_more.
+
+    Note: editor_json is searched via a Postgres JSONB→text cast which matches
+    against the raw JSON string.  This is slightly noisy (key names may match)
+    but catches the common case where BlockNote documents have no source_markdown.
     """
+    from sqlalchemy import cast
+    from sqlalchemy import Text as SaText
+
     q_lower = q.lower()
     q_like = f"%{q}%"
 
@@ -354,6 +392,8 @@ async def search_documents(
             or_(
                 Document.title.ilike(q_like),
                 Document.source_markdown.ilike(q_like),
+                # Fall back to searching raw JSONB text for editor-only docs.
+                cast(Document.editor_json, SaText).ilike(q_like),
             ),
         )
         .order_by(
@@ -377,8 +417,13 @@ async def search_documents(
         title_match = q_lower in (doc.title or "").lower()
         match_type = "title" if title_match else "body"
         snippet: str | None = None
-        if match_type == "body" and doc.source_markdown:
-            snippet = _make_snippet(doc.source_markdown, q)
+        if match_type == "body":
+            body = doc.source_markdown or ""
+            if not body and doc.editor_json:
+                # Extract plain text for snippet generation.
+                body = _extract_plain_text(doc.editor_json)
+            if body:
+                snippet = _make_snippet(body, q)
         items.append(
             DocumentSearchResult(
                 match_type=match_type,

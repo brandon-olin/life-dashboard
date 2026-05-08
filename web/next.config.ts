@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+const API_URL = process.env.API_URL ?? "http://localhost:8000";
+
 const nextConfig: NextConfig = {
   // Produces a self-contained build in .next/standalone — required for the
   // Docker image so node_modules don't need to be copied in full.
@@ -14,6 +16,18 @@ const nextConfig: NextConfig = {
   // server process — defaults to localhost:8000 for local dev.
   // /api/* is handled by the catch-all Route Handler at app/api/[...path]/route.ts,
   // which proxies requests to the FastAPI backend. No rewrites needed.
+
+  // Proxy /uploads/* directly to the API using Next.js rewrites rather than
+  // the JS catch-all route handler. The catch-all proxy uses upstream.text()
+  // which corrupts binary data; rewrites forward the raw bytes correctly.
+  async rewrites() {
+    return [
+      {
+        source: "/uploads/:path*",
+        destination: `${API_URL}/uploads/:path*`,
+      },
+    ];
+  },
 };
 
 export default nextConfig;

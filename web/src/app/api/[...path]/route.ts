@@ -31,13 +31,31 @@ async function proxy(request: NextRequest): Promise<NextResponse> {
   const upstream = await fetch(targetUrl, init);
   const responseHeaders = new Headers();
 
-  const ct = upstream.headers.get("content-type");
+  const ct = upstream.headers.get("content-type") ?? "";
   if (ct) responseHeaders.set("content-type", ct);
 
   // Forward Set-Cookie so httpOnly refresh cookies propagate correctly.
   upstream.headers.forEach((value, key) => {
     if (key.toLowerCase() === "set-cookie") responseHeaders.append("set-cookie", value);
   });
+
+  // SSE / streaming responses — pipe the body through without buffering.
+  // Using upstream.text() would block until the stream closes, killing streaming UX.
+  if (ct.includes("text/event-stream") && upstream.body) {
+    responseHeaders.set("cache-control", "no-cache");
+    responseHeaders.set("connection", "keep-alive");
+    responseHeaders.set("x-accel-buffering", "no");
+    return new NextResponse(upstream.body, {
+      status: upstream.status,
+      headers: responseHeaders,
+    });
+  }
+
+  // 204 / 205 are "null body" statuses — the Response constructor rejects any
+  // body (even an empty string) for these codes per the Fetch spec.
+  if (upstream.status === 204 || upstream.status === 205) {
+    return new NextResponse(null, { status: upstream.status, headers: responseHeaders });
+  }
 
   return new NextResponse(await upstream.text(), {
     status: upstream.status,

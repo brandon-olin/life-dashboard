@@ -267,3 +267,18 @@ async def delete_note(
     await db.delete(note)
     await db.commit()
     return True
+
+
+async def delete_all_notes(
+    db: AsyncSession,
+    household_id: uuid.UUID,
+) -> int:
+    """Delete every note belonging to this household. Returns the count deleted."""
+    result = await db.execute(
+        delete(Note)
+        .where(Note.household_id == household_id)
+        .returning(Note.id)
+    )
+    deleted = len(result.fetchall())
+    await db.commit()
+    return deleted

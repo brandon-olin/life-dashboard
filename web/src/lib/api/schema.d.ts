@@ -586,6 +586,43 @@ export interface paths {
         patch: operations["update_entry_workouts__workout_id__entries__entry_id__patch"];
         trace?: never;
     };
+    "/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Notes */
+        get: operations["list_notes_notes_get"];
+        put?: never;
+        /** Create Note */
+        post: operations["create_note_notes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notes/{note_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Note */
+        get: operations["get_note_notes__note_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Note */
+        delete: operations["delete_note_notes__note_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Note */
+        patch: operations["update_note_notes__note_id__patch"];
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -1992,6 +2029,86 @@ export interface components {
             name?: string | null;
             /** Color */
             color?: string | null;
+        };
+        /** BacklinkRef */
+        BacklinkRef: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Alias */
+            alias: string | null;
+        };
+        /** NoteTagRef */
+        NoteTagRef: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Color */
+            color: string | null;
+        };
+        /** NoteSummary */
+        NoteSummary: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Content Md */
+            content_md: string | null;
+            /** Archived At */
+            archived_at: string | null;
+            /** Created At */
+            created_at: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** NoteResponse */
+        NoteResponse: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Content Md */
+            content_md: string | null;
+            /** Content Json */
+            content_json: Record<string, unknown> | null;
+            /** Archived At */
+            archived_at: string | null;
+            /** Created At */
+            created_at: string;
+            /** Updated At */
+            updated_at: string;
+            tags: components["schemas"]["NoteTagRef"][];
+            backlinks: components["schemas"]["BacklinkRef"][];
+        };
+        /** NoteListResponse */
+        NoteListResponse: {
+            items: components["schemas"]["NoteSummary"][];
+            /** Total */
+            total: number;
+        };
+        /** NoteCreate */
+        NoteCreate: {
+            /** Title */
+            title: string;
+            /** Content Md */
+            content_md?: string | null;
+            /** Content Json */
+            content_json?: Record<string, unknown> | null;
+            /** Tag Ids */
+            tag_ids?: string[];
+        };
+        /** NoteUpdate */
+        NoteUpdate: {
+            /** Title */
+            title?: string | null;
+            /** Content Md */
+            content_md?: string | null;
+            /** Content Json */
+            content_json?: Record<string, unknown> | null;
+            /** Tag Ids */
+            tag_ids?: string[] | null;
         };
         /** TodoCreate */
         TodoCreate: {
@@ -4438,6 +4555,108 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    list_notes_notes_get: {
+        parameters: {
+            query?: {
+                include_archived?: boolean;
+                tag_id?: string | null;
+                q?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["NoteListResponse"] };
+            };
+            422: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["HTTPValidationError"] };
+            };
+        };
+    };
+    create_note_notes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: { "application/json": components["schemas"]["NoteCreate"] };
+        };
+        responses: {
+            201: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["NoteResponse"] };
+            };
+            422: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["HTTPValidationError"] };
+            };
+        };
+    };
+    get_note_notes__note_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: { note_id: string };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["NoteResponse"] };
+            };
+            422: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["HTTPValidationError"] };
+            };
+        };
+    };
+    update_note_notes__note_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: { note_id: string };
+            cookie?: never;
+        };
+        requestBody: {
+            content: { "application/json": components["schemas"]["NoteUpdate"] };
+        };
+        responses: {
+            200: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["NoteResponse"] };
+            };
+            422: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["HTTPValidationError"] };
+            };
+        };
+    };
+    delete_note_notes__note_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: { note_id: string };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: { headers: { [name: string]: unknown }; content?: never };
+            422: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["HTTPValidationError"] };
             };
         };
     };

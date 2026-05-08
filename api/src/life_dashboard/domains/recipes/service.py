@@ -16,6 +16,7 @@ from life_dashboard.domains.recipes.schemas import (
 )
 from life_dashboard.domains.tags.models import Tag, Tagging
 from life_dashboard.domains.tags.schemas import TagSummary
+from life_dashboard.uploads.service import download_remote_image, _is_external_url
 
 _ENTITY_TYPE = "recipe"
 
@@ -114,13 +115,21 @@ async def create_recipe(
     user_id: uuid.UUID,
     data: RecipeCreate,
 ) -> RecipeResponse:
+    # Download external cover images so they're stored locally and won't break
+    # if the source URL changes or the originating site goes away.
+    cover_image_url = data.cover_image_url
+    if _is_external_url(cover_image_url):
+        local_url = await download_remote_image(cover_image_url)  # type: ignore[arg-type]
+        if local_url:
+            cover_image_url = local_url
+
     recipe = Recipe(
         household_id=household_id,
         created_by_user_id=user_id,
         goal_id=data.goal_id,
         name=data.name,
         description=data.description,
-        cover_image_url=data.cover_image_url,
+        cover_image_url=cover_image_url,
         source_url=data.source_url,
         prep_time_minutes=data.prep_time_minutes,
         cook_time_minutes=data.cook_time_minutes,
@@ -209,6 +218,13 @@ async def update_recipe(
         return None
 
     sent = data.model_fields_set
+
+    # If a new external cover image URL is being set, download and store it locally.
+    if "cover_image_url" in sent and _is_external_url(data.cover_image_url):
+        local_url = await download_remote_image(data.cover_image_url)  # type: ignore[arg-type]
+        if local_url:
+            data = data.model_copy(update={"cover_image_url": local_url})
+
     for field in ("goal_id", "name", "description", "cover_image_url", "source_url",
                   "prep_time_minutes", "cook_time_minutes", "servings", "notes", "body"):
         if field in sent:

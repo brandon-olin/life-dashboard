@@ -82,6 +82,16 @@ async def update_note(
     return note
 
 
+@router.delete("", status_code=200)
+async def delete_all_notes(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete all notes for the current household."""
+    count = await service.delete_all_notes(db, household_id=current_user.household_id)
+    return {"deleted": count}
+
+
 @router.delete("/{note_id}", status_code=204)
 async def delete_note(
     note_id: uuid.UUID,

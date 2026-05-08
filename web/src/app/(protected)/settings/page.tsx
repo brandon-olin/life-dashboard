@@ -39,13 +39,14 @@ import {
 
 // ── Left nav ──────────────────────────────────────────────────────────────────
 
-type Section = "appearance" | "account" | "household" | "ai";
+type Section = "appearance" | "navigation" | "account" | "household" | "ai";
 
 const SECTIONS: { id: Section; label: string; icon: React.ElementType }[] = [
-  { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "account",    label: "Account",    icon: User    },
-  { id: "household",  label: "Household",  icon: Home    },
-  { id: "ai",         label: "AI",         icon: Bot     },
+  { id: "appearance",  label: "Appearance",  icon: Palette   },
+  { id: "navigation",  label: "Navigation",  icon: GripVertical },
+  { id: "account",     label: "Account",     icon: User      },
+  { id: "household",   label: "Household",   icon: Home      },
+  { id: "ai",          label: "AI",          icon: Bot       },
 ];
 
 function SettingsNav({
@@ -936,6 +937,14 @@ function AppearanceSection() {
       <SubSection title="Custom color overrides">
         <CustomVarPickers />
       </SubSection>
+    </div>
+  );
+}
+
+function NavigationSection() {
+  return (
+    <div className="space-y-5">
+      <SectionTitle>Navigation</SectionTitle>
       <SubSection title="Sidebar layout">
         <SidebarCustomizer />
       </SubSection>
@@ -1307,10 +1316,11 @@ export default function SettingsPage() {
 
       {/* Content area */}
       <div className="flex-1 overflow-y-auto p-8 max-w-2xl">
-        {active === "appearance" && <AppearanceSection />}
-        {active === "account"    && <AccountSection />}
-        {active === "household"  && <HouseholdSection />}
-        {active === "ai"         && <AiSection />}
+        {active === "appearance"  && <AppearanceSection />}
+        {active === "navigation"  && <NavigationSection />}
+        {active === "account"     && <AccountSection />}
+        {active === "household"   && <HouseholdSection />}
+        {active === "ai"          && <AiSection />}
       </div>
     </div>
   );

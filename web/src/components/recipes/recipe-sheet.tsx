@@ -35,6 +35,7 @@ type ImportPreview = {
   name: string;
   description: string | null;
   source_url: string | null;
+  cover_image_url: string | null;
   prep_time_minutes: number | null;
   cook_time_minutes: number | null;
   servings: number | null;
@@ -160,23 +161,25 @@ export function RecipeSheet({
   open,
   recipe,
   onClose,
+  onDeleted,
 }: {
   open: boolean;
   recipe: Recipe | null;
   onClose: () => void;
+  /** Called instead of onClose after a successful delete. Use to navigate away on detail pages. */
+  onDeleted?: () => void;
 }) {
   const qc = useQueryClient();
   const isEdit = recipe !== null;
 
   const [tab, setTab] = useState<Tab>("manual");
   const [form, setForm] = useState<FormState>(blankForm());
-  // Ingredients + steps captured from an import (passed along verbatim on save)
+  // Ingredients + steps + cover image captured from an import (passed along verbatim on save)
   const [importedIngredients, setImportedIngredients] = useState<
     ImportPreview["ingredients"]
   >([]);
-  const [importedSteps, setImportedSteps] = useState<ImportPreview["steps"]>(
-    []
-  );
+  const [importedSteps, setImportedSteps] = useState<ImportPreview["steps"]>([]);
+  const [importedCoverImageUrl, setImportedCoverImageUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -189,6 +192,7 @@ export function RecipeSheet({
       setForm(recipe ? formFromRecipe(recipe) : blankForm());
       setImportedIngredients([]);
       setImportedSteps([]);
+      setImportedCoverImageUrl(null);
       setError(null);
     }
   }
@@ -205,6 +209,7 @@ export function RecipeSheet({
     setForm(formFromImport(preview));
     setImportedIngredients(preview.ingredients ?? []);
     setImportedSteps(preview.steps ?? []);
+    setImportedCoverImageUrl(preview.cover_image_url ?? null);
     setTab("manual"); // switch to form so user can review & edit
   }
 
@@ -248,7 +253,14 @@ export function RecipeSheet({
           instruction: s.instruction,
           notes: null,
         }));
-        await createRecipe({ body: { ...base, ingredients, steps } });
+        await createRecipe({
+          body: {
+            ...base,
+            cover_image_url: importedCoverImageUrl ?? null,
+            ingredients,
+            steps,
+          },
+        });
       }
 
       qc.invalidateQueries({ queryKey: ["get", "/recipes"] });
@@ -263,12 +275,24 @@ export function RecipeSheet({
   async function handleDelete() {
     if (!recipe) return;
     setSaving(true);
+    setError(null);
+    let succeeded = false;
     try {
       await deleteRecipe({ params: { path: { recipe_id: recipe.id } } });
-      qc.invalidateQueries({ queryKey: ["get", "/recipes"] });
-      onClose();
+      succeeded = true;
+    } catch {
+      setError("Failed to delete recipe.");
     } finally {
       setSaving(false);
+    }
+    if (!succeeded) return;
+    // Post-delete cleanup is intentionally outside the try/catch so errors
+    // in cache invalidation or navigation don't show a false "delete failed" message.
+    qc.invalidateQueries({ queryKey: ["get", "/recipes"] });
+    if (onDeleted) {
+      onDeleted();
+    } else {
+      onClose();
     }
   }
 
@@ -315,6 +339,18 @@ export function RecipeSheet({
             <ImportTab onImported={handleImported} />
           ) : (
             <div className="space-y-4">
+              {/* Cover image preview — shown after a successful import */}
+              {importedCoverImageUrl && (
+                <div className="w-full rounded-lg overflow-hidden bg-muted" style={{ maxHeight: "160px" }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={importedCoverImageUrl}
+                    alt="Recipe cover"
+                    className="w-full h-40 object-cover"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  />
+                </div>
+              )}
               {hasImportedData && (
                 <div className="rounded-md bg-muted/60 border px-3 py-2 text-xs text-muted-foreground">
                   Imported {importedIngredients.length} ingredient

@@ -163,6 +163,7 @@ async def chat(
             provider=provider,
             conversation_id=conv.id,
             user_id=current_user.id,
+            household_id=current_user.household_id,
             display_name=current_user.display_name or current_user.email,
             system=system,
             messages=messages,

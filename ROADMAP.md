@@ -12,47 +12,56 @@ Self-hosted stack is fully running (Docker on NAS + Tailscale + Caddy TLS).
 - **Shell** — responsive sidebar with drag-to-resize, command palette (⌘P), themed scrollbars; ⌘P searches all nav items regardless of sidebar visibility
 - **Theme system** — palette presets (light + dark), per-variable CSS customization, synced to user profile
 - **Sidebar customization** — show/hide/reorder nav items, collapsible folder groups (SVG icon picker, drag-to-reorder, contents management), persisted to user profile
-- **Settings page** — left-nav shell (Appearance, Account, Household sections)
+- **Settings page** — left-nav shell with Appearance, Navigation (sidebar customizer), Account, Household, and AI tabs
 - **Documents** — hierarchical page tree (collapse state persisted), BlockNote rich-text editor, document icons (emoji), drag-to-resize panel
-- **Notion import** — HTML + markdown zip; toggle lists, page icons, inter-page link rewriting; checkbox-inside-toggle parse error nearly resolved
-- **Stub pages** — Tasks, Habits, Goals, Recipes, Grocery Lists, Workouts, Contacts, Calendar (routes + basic API domains exist, no UI built yet)
+- **Notion import** — HTML + markdown zip; toggle lists, page icons, inter-page link rewriting
+- **Recipes** — full UI: card grid, detail page, sheet (create/edit/delete), ingredients, steps, notes, rich-text body (BlockNote), tags, cover images stored locally, URL import via Schema.org JSON-LD
+- **Notes / Zettelkasten** — atomic notes, tags (many-to-many), `[[wikilink]]` backlinks, graph view (force-directed), tag browser, full-text search including BlockNote JSON content; bulk delete
+- **Contacts** — full CRUD contact list
+- **Workouts** — full gym-use-case UI: immediately persists on "Start workout", per-exercise per-set data model (`sets: [{weight_lbs, reps}]`), debounced auto-save for all fields, save status badge per exercise, bulk delete
+- **AI assistant** — SSE streaming chat, conversation history with sidebar, markdown rendering, tool use (read + write: workouts, todos, habits, goals, notes, calendar events, recipes, documents, contacts, grocery lists), `create_workout` / `delete_workout` write tools for data migration, BYOK (Anthropic key), conversation memory
+- **AI panel** — ⌘K slide-out panel from anywhere in the app, draggable left-edge resize (persisted), conversation popover in panel header, full-page fallback at `/ai`
 
 ---
 
 ## In progress
 
-- **Notion import edge case** — checkbox items nested inside toggle blocks trigger a BlockNote `blockContainer` parse error; fix in progress in a separate thread, nearly resolved
-- **Image upload** — inline media attachments in the BlockNote editor; being built here, motivated by recipe images
+- **Workouts data migration** — 2026 workout logs exist as documents; AI `create_workout` tool is ready to migrate them with per-set data preservation
+- **Image upload** — inline media attachments in the BlockNote editor
 
 ---
 
 ## Near-term
 
+### Workouts polish
+- [ ] Exercise summary shown on the workout list card (e.g. "Bench · Squat · Deadlift")
+- [ ] Volume/progress charts — weight over time per exercise, weekly volume
+- [ ] Exercise name autocomplete from past entries (avoids typo-induced duplicates)
+- [ ] Workout templates — save a session as a template to reuse
+
 ### Documents
 - [ ] Archive/delete individual pages
 - [ ] Drag-to-reorder pages in the tree
-
-### Notes / Zettelkasten
-- [ ] Notes domain — atomic notes, tags (many-to-many), `[[wikilink]]` backlinks stored in a backlinks table and populated on save
-- [ ] Notes UI — tag browser, backlinks panel, visually distinct from Documents
+- [ ] Inline image upload in BlockNote editor
 
 ### Calendar
 - [ ] Build out the existing stub — event creation, month/week/day views, recurrence, member assignment
 
-### UI polish
-- [ ] Compress sidebar — search to icon-only (⌘P trigger), Ask AI + Settings to footer icon buttons
+### AI
+- [ ] `create_note` / `update_note` write tools (currently read-only for notes)
+- [ ] `create_todo` write tool
+- [ ] Scheduled AI summaries (e.g. weekly digest, habit nudges)
+- [ ] Audit log for AI-triggered writes shown in chat
 
 ---
 
 ## Medium-term
 
-### Core domain UIs (priority order)
-1. **Tasks** — full CRUD, due dates, recurrence, member assignment, completion
-2. **Habits** — streak tracking, completion calendar, frequency config
+### Core domain UIs (remaining stubs)
+1. **Tasks (Todos)** — full CRUD already exists in API; needs a real UI with due dates, filters, completion, recurrence
+2. **Habits** — streak tracking, completion calendar heatmap, frequency config
 3. **Goals** — progress tracking, milestones, task linking
-4. **Recipes** — full UI, ingredients, steps, URL import via JSON-LD
-5. **Grocery Lists** — linked to recipes, household-shared
-6. **Workouts** — log entries, exercise library, strength/cardio metrics
+4. **Grocery Lists** — linked to recipes, household-shared, check-off UX
 
 ### Household multi-member
 - [ ] Invite flow — create additional accounts in a household
@@ -61,30 +70,25 @@ Self-hosted stack is fully running (Docker on NAS + Tailscale + Caddy TLS).
 
 ### Search
 - [ ] Full-text search across documents and notes (Postgres `tsvector`)
-- [ ] Command palette integration
+- [ ] Command palette integration — search content, not just nav items
+
+### Mobile
+- [ ] Mobile-responsive audit — test and fix core pages on small screens
+- [ ] PWA manifest + service worker for home screen install
 
 ---
 
 ## Later
 
-### AI layer (`agent/`)
-- MCP server exposing domain services as tools
-- Claude integration — household context, task suggestions, weekly summaries
-- BYOK configuration (OpenAI, Anthropic key)
-- Local LLM option (Ollama)
-- Audit log for all AI-triggered writes
-
 ### Cloud-hosted tier
 - Multi-tenant infrastructure, tiered pricing (free self-hosted forever; paid for managed hosting, backups, managed AI)
 - Automated backup service, migration path from self-hosted
 
-### Mobile
-- Mobile-responsive polish on existing web app
-- Native mobile apps (push notifications, offline) — premium tier
+### Native mobile
+- Push notifications, offline support — premium tier
 
 ### Integrations
 - iCal export for calendar events
-- Recipe import from URLs (JSON-LD scraping)
 - External calendar sync (Google Calendar, etc.) — premium
 
 ---

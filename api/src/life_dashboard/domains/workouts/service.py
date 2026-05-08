@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from life_dashboard.domains.workouts.models import ExerciseEntry, Workout
@@ -205,6 +205,21 @@ async def delete_workout(
     await db.delete(workout)
     await db.commit()
     return True
+
+
+async def delete_all_workouts(
+    db: AsyncSession,
+    household_id: uuid.UUID,
+) -> int:
+    """Delete every workout (and its entries via cascade) for this household."""
+    result = await db.execute(
+        delete(Workout)
+        .where(Workout.household_id == household_id)
+        .returning(Workout.id)
+    )
+    deleted = len(result.fetchall())
+    await db.commit()
+    return deleted
 
 
 # ── Exercise entries ───────────────────────────────────────────────────────────

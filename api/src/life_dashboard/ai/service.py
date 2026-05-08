@@ -25,6 +25,7 @@ from life_dashboard.ai.models import (
     MemberAiMemory,
 )
 from life_dashboard.ai.provider import AIProvider, AnthropicProvider
+from life_dashboard.ai.tools import TOOL_DEFINITIONS, execute_tool
 from life_dashboard.ai.schemas import (
     AiSettingsResponse,
     AiSettingsUpdate,
@@ -505,13 +506,17 @@ def _build_system_prompt(user: User, memory_text: str) -> str:
         f"You are a helpful household assistant for {name}'s life dashboard.",
         f"Today's date is {today}.",
         "",
-        "You help manage and make sense of household data: tasks, habits, goals, "
+        "You can read and write household data: tasks, habits, goals, "
         "documents, notes, recipes, workouts, and calendar events.",
         "",
         "Guidelines:",
-        "- When creating or modifying data, briefly confirm what you're about to "
-        "save before proceeding. For lengthy content (recipes, long documents), "
-        "show a short summary — not the full content — in the confirmation.",
+        "- Before creating data, briefly state what you're about to save "
+        "(date, name, entry count) and wait for the user to confirm. "
+        "For bulk imports, show a short plan first — e.g. '23 workouts from Jan–Dec 2026'.",
+        "- When migrating data from a document, process workouts one at a time and "
+        "report after each: '✓ 2026-03-14 Upper A (4 exercises)'. "
+        "Stop and ask if anything looks wrong.",
+        "- If a write fails, report the error clearly and ask how to proceed.",
         "- For read-only questions, answer directly without unnecessary caveats.",
         "- Be concise. This is a personal dashboard, not a general-purpose chatbot.",
     ]
@@ -548,30 +553,105 @@ async def generate_stream(
     provider: AIProvider,
     conversation_id: uuid.UUID,
     user_id: uuid.UUID,
+    household_id: uuid.UUID,
     display_name: str,
     system: str,
-    messages: list[dict[str, str]],
+    messages: list[dict],
 ) -> AsyncGenerator[str, None]:
     """Async generator that streams SSE events to the client.
 
-    Event shapes:
-      {"type": "delta",   "content": "<text chunk>"}
-      {"type": "done",    "conversation_id": "<uuid>", "message_id": "<uuid>"}
-      {"type": "error",   "message": "<user-facing error text>"}
+    Runs the full tool-use loop: Claude may call database tools zero or more
+    times before producing a final text response. Each tool call is announced
+    to the client via a "tool_use" event so the UI can show progress.
 
-    The assistant message is saved to the DB after the stream completes.
-    Memory refresh runs after the done event is emitted — it's non-critical
-    and should not block the response from reaching the client.
+    Event shapes:
+      {"type": "delta",    "content": "<text chunk>"}
+      {"type": "tool_use", "tool": "<tool_name>"}
+      {"type": "done",     "conversation_id": "<uuid>", "message_id": "<uuid>"}
+      {"type": "error",    "message": "<user-facing error text>"}
+
+    The assistant's final text is saved to the DB after streaming completes.
+    Memory refresh runs after the done event — non-critical, failure is ignored.
     """
-    accumulated: list[str] = []
+    # Working copy of the message list — grows as tool turns are added.
+    turn_messages: list[dict] = list(messages)
+    # Only the final user-visible text is saved to DB / used for memory.
+    final_text_parts: list[str] = []
+
+    # Safety cap: prevent runaway tool-use loops.
+    _MAX_TOOL_ROUNDS = 5
 
     try:
-        async for chunk in provider.stream_chat(messages, system):
-            accumulated.append(chunk)
-            yield f"data: {json.dumps({'type': 'delta', 'content': chunk})}\n\n"
+        for _round in range(_MAX_TOOL_ROUNDS + 1):
+            round_text: list[str] = []
+            called_tools = False
 
-        # Save complete assistant response.
-        full_content = "".join(accumulated)
+            async for event_type, payload in provider.stream_chat(
+                turn_messages, system, tools=TOOL_DEFINITIONS
+            ):
+                if event_type == "text":
+                    round_text.append(payload)
+                    yield f"data: {json.dumps({'type': 'delta', 'content': payload})}\n\n"
+
+                elif event_type == "rate_limited":
+                    wait_secs = int(payload)
+                    yield f"data: {json.dumps({'type': 'tool_use', 'tool': f'rate_limited_{wait_secs}s'})}\n\n"
+
+                elif event_type == "done":
+                    final_msg = payload
+                    tool_uses = [
+                        blk for blk in final_msg.content
+                        if getattr(blk, "type", None) == "tool_use"
+                    ]
+
+                    if not tool_uses:
+                        # No tool calls — this is the final text response.
+                        final_text_parts.extend(round_text)
+                        # Inner loop ends naturally; called_tools stays False.
+                        break
+
+                    if _round == _MAX_TOOL_ROUNDS:
+                        # Hit the safety cap; use whatever text we have.
+                        final_text_parts.extend(round_text)
+                        logger.warning(
+                            "Tool-use loop hit %d-round cap for conversation %s",
+                            _MAX_TOOL_ROUNDS, conversation_id,
+                        )
+                        break
+
+                    # ── Execute tool calls ────────────────────────────────────
+                    assistant_content: list[dict] = []
+                    if round_text:
+                        assistant_content.append({"type": "text", "text": "".join(round_text)})
+                    for tu in tool_uses:
+                        assistant_content.append({
+                            "type": "tool_use",
+                            "id": tu.id,
+                            "name": tu.name,
+                            "input": tu.input,
+                        })
+                    turn_messages.append({"role": "assistant", "content": assistant_content})
+
+                    tool_results: list[dict] = []
+                    for tu in tool_uses:
+                        yield f"data: {json.dumps({'type': 'tool_use', 'tool': tu.name})}\n\n"
+                        result = await execute_tool(db, tu.name, tu.input, household_id, user_id)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tu.id,
+                            "content": json.dumps(result),
+                        })
+
+                    turn_messages.append({"role": "user", "content": tool_results})
+                    called_tools = True
+                    # Inner async for ends; outer loop continues to next round.
+
+            # Break the outer loop when Claude gave a final answer (no tools called).
+            if not called_tools:
+                break
+
+        # ── Save the final assistant response ─────────────────────────────────
+        full_content = "".join(final_text_parts)
         if full_content:
             msg = await append_message(
                 db, conversation_id, AiMessageRole.assistant, full_content
@@ -579,11 +659,9 @@ async def generate_stream(
             await _touch_conversation(db, conversation_id)
             await db.commit()
 
-            yield (
-                f"data: {json.dumps({'type': 'done', 'conversation_id': str(conversation_id), 'message_id': str(msg.id)})}\n\n"
-            )
+            yield f"data: {json.dumps({'type': 'done', 'conversation_id': str(conversation_id), 'message_id': str(msg.id)})}\n\n"
 
-            # Lazy memory refresh — runs after done is sent; failure is non-fatal.
+            # Lazy memory refresh — non-critical, runs after done is sent.
             try:
                 await maybe_refresh_memory(db, user_id, display_name, provider)
             except Exception:
@@ -591,13 +669,13 @@ async def generate_stream(
         else:
             yield f"data: {json.dumps({'type': 'error', 'message': 'The AI returned an empty response. Please try again.'})}\n\n"
 
-    except Exception as exc:
+    except Exception:
         logger.exception("Stream error for conversation %s", conversation_id)
-        # Save whatever was accumulated before the error, if anything useful.
-        if accumulated:
-            partial = "".join(accumulated)
+        if final_text_parts:
             try:
-                await append_message(db, conversation_id, AiMessageRole.assistant, partial)
+                await append_message(
+                    db, conversation_id, AiMessageRole.assistant, "".join(final_text_parts)
+                )
                 await db.commit()
             except Exception:
                 pass

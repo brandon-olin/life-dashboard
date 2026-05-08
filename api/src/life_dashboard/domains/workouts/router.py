@@ -88,6 +88,16 @@ async def update_workout(
     return workout
 
 
+@router.delete("", status_code=200)
+async def delete_all_workouts(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete all workouts for the current household."""
+    count = await service.delete_all_workouts(db, current_user.household_id)
+    return {"deleted": count}
+
+
 @router.delete("/{workout_id}", status_code=http_status.HTTP_204_NO_CONTENT)
 async def delete_workout(
     workout_id: uuid.UUID,

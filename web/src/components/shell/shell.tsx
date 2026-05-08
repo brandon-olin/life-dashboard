@@ -11,6 +11,7 @@ import { resolveFolderIcon, DEFAULT_FOLDER_ICON } from "@/lib/sidebar/folder-ico
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { CommandPalette } from "@/components/shell/command-palette";
+import { AiChat } from "@/components/ai/ai-chat";
 import { cn } from "@/lib/utils";
 import {
   ChevronRight,
@@ -171,9 +172,11 @@ function FolderNavItem({
 function NavLinks({
   onNavigate,
   onSearchOpen,
+  onAiOpen,
 }: {
   onNavigate?: () => void;
   onSearchOpen: () => void;
+  onAiOpen: () => void;
 }) {
   const pathname = usePathname();
   const { sidebarConfig } = useSidebarConfig();
@@ -208,15 +211,18 @@ function NavLinks({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                disabled
-                className="flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground opacity-40 cursor-not-allowed"
+                onClick={() => {
+                  onNavigate?.();
+                  onAiOpen();
+                }}
+                className="flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
               >
                 <MessageSquare className="h-4 w-4 shrink-0" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">
               <p>
-                Ask AI <span className="ml-1 opacity-60">(coming soon)</span>
+                Ask AI <kbd className="ml-1 font-mono opacity-60">⌘K</kbd>
               </p>
             </TooltipContent>
           </Tooltip>
@@ -266,9 +272,11 @@ function NavLinks({
 function SidebarContent({
   onNavigate,
   onSearchOpen,
+  onAiOpen,
 }: {
   onNavigate?: () => void;
   onSearchOpen: () => void;
+  onAiOpen: () => void;
 }) {
   const { user, logout } = useAuth();
   const router = useRouter();
@@ -286,7 +294,7 @@ function SidebarContent({
         </span>
       </div>
 
-      <NavLinks onNavigate={onNavigate} onSearchOpen={onSearchOpen} />
+      <NavLinks onNavigate={onNavigate} onSearchOpen={onSearchOpen} onAiOpen={onAiOpen} />
 
       {/* Footer — avatar → account settings | settings icon | logout */}
       <div className="px-3 pb-4 pt-2 shrink-0 border-t mt-2">
@@ -344,9 +352,15 @@ function SidebarContent({
 
 // ── shell ─────────────────────────────────────────────────────────────────────
 
+const AI_PANEL_MIN = 360;
+const AI_PANEL_MAX = 900;
+const AI_PANEL_DEFAULT = 480;
+const AI_PANEL_STORAGE_KEY = "ld-ai-panel-width";
+
 export function Shell({ children }: { children: React.ReactNode }) {
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [mobileOpen,   setMobileOpen]   = useState(false);
+  const [paletteOpen,  setPaletteOpen]  = useState(false);
+  const [aiPanelOpen,  setAiPanelOpen]  = useState(false);
   const { width: sidebarWidth, startResize } = useResizablePanel({
     defaultWidth: 256,
     minWidth: 180,
@@ -354,11 +368,45 @@ export function Shell({ children }: { children: React.ReactNode }) {
     storageKey: "ld-sidebar-width",
   });
 
+  // AI panel width — persisted, resizable from the left edge
+  const [aiPanelWidth, setAiPanelWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return AI_PANEL_DEFAULT;
+    const stored = localStorage.getItem(AI_PANEL_STORAGE_KEY);
+    const parsed = stored ? parseInt(stored, 10) : NaN;
+    return isNaN(parsed) ? AI_PANEL_DEFAULT : Math.min(AI_PANEL_MAX, Math.max(AI_PANEL_MIN, parsed));
+  });
+
+  function startAiResize(e: React.MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = aiPanelWidth;
+    const onMouseMove = (ev: MouseEvent) => {
+      // Dragging left increases width (panel is on the right)
+      const next = Math.min(AI_PANEL_MAX, Math.max(AI_PANEL_MIN, startWidth + (startX - ev.clientX)));
+      setAiPanelWidth(next);
+      localStorage.setItem(AI_PANEL_STORAGE_KEY, String(next));
+    };
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }
+
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "p") {
         e.preventDefault();
         setPaletteOpen(true);
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setAiPanelOpen((o) => !o);
       }
     }
     document.addEventListener("keydown", handleKeyDown);
@@ -372,7 +420,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
         className="hidden md:flex flex-col shrink-0 border-r bg-card"
         style={{ width: sidebarWidth }}
       >
-        <SidebarContent onSearchOpen={() => setPaletteOpen(true)} />
+        <SidebarContent
+          onSearchOpen={() => setPaletteOpen(true)}
+          onAiOpen={() => setAiPanelOpen(true)}
+        />
       </aside>
 
       {/* Sidebar resize handle */}
@@ -399,6 +450,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   setMobileOpen(false);
                   setPaletteOpen(true);
                 }}
+                onAiOpen={() => {
+                  setMobileOpen(false);
+                  setAiPanelOpen(true);
+                }}
               />
             </SheetContent>
           </Sheet>
@@ -412,6 +467,32 @@ export function Shell({ children }: { children: React.ReactNode }) {
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
       />
+
+      {/* AI panel — custom right-side panel with draggable left edge */}
+      {aiPanelOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 z-40 bg-black/20 md:hidden"
+            onClick={() => setAiPanelOpen(false)}
+          />
+          {/* Panel */}
+          <div
+            className="fixed top-0 right-0 bottom-0 z-50 flex bg-background border-l shadow-xl
+                        animate-in slide-in-from-right duration-200"
+            style={{ width: aiPanelOpen ? `min(${aiPanelWidth}px, 100vw)` : 0 }}
+          >
+            {/* Drag handle — desktop only */}
+            <div
+              className="hidden md:block w-1 shrink-0 cursor-col-resize hover:bg-primary/40 active:bg-primary/60 transition-colors self-stretch"
+              onMouseDown={startAiResize}
+            />
+            <div className="flex-1 min-w-0 overflow-hidden">
+              <AiChat onClose={() => setAiPanelOpen(false)} />
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

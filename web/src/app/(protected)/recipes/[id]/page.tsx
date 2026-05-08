@@ -202,6 +202,7 @@ export default function RecipeDetailPage() {
           setSheetOpen(false);
           qc.invalidateQueries({ queryKey: ["get", "/recipes/{recipe_id}"] });
         }}
+        onDeleted={() => router.push("/recipes")}
       />
     </div>
   );

@@ -9,7 +9,7 @@ Planned: OpenAIProvider, OllamaProvider (both will be drop-in replacements).
 """
 from __future__ import annotations
 
-from typing import AsyncIterator, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -18,12 +18,19 @@ class AIProvider(Protocol):
 
     def stream_chat(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict],
         system: str,
         *,
+        tools: list[dict] | None = None,
         max_tokens: int = 4096,
-    ) -> AsyncIterator[str]:
-        """Yield text delta strings as the model generates them.
+    ) -> AsyncIterator[tuple[str, Any]]:
+        """Yield structured streaming events.
+
+        Each yielded value is a tuple of (event_type, payload):
+          ("text", str)       — a text delta from the model
+          ("done", message)   — the final complete message object; check
+                                message.stop_reason == "tool_use" to know
+                                whether tool calls are present in message.content
 
         Defined as a plain def returning AsyncIterator so both async generator
         functions and regular async methods that return an async iterator
@@ -33,7 +40,7 @@ class AIProvider(Protocol):
 
     async def complete(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict],
         system: str,
         *,
         max_tokens: int = 1024,
@@ -65,24 +72,52 @@ class AnthropicProvider:
 
     async def stream_chat(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict],
         system: str,
         *,
+        tools: list[dict] | None = None,
         max_tokens: int = 4096,
-    ) -> AsyncIterator[str]:  # type: ignore[override]
-        """Async generator that yields text deltas from the streaming API."""
-        async with self._client.messages.stream(
+    ) -> AsyncIterator[tuple[str, Any]]:  # type: ignore[override]
+        """Async generator yielding ("text", chunk) deltas then ("done", message).
+
+        Retries once on 429 rate-limit errors after the server-suggested delay
+        (or 60 s if no Retry-After header is present).
+        """
+        import asyncio
+        from anthropic import RateLimitError
+
+        kwargs: dict[str, Any] = dict(
             model=self.CHAT_MODEL,
             max_tokens=max_tokens,
             system=system,
-            messages=messages,  # type: ignore[arg-type]
-        ) as stream:
-            async for text in stream.text_stream:
-                yield text
+            messages=messages,
+        )
+        if tools:
+            kwargs["tools"] = tools
+
+        for attempt in range(2):
+            try:
+                async with self._client.messages.stream(**kwargs) as stream:
+                    async for text in stream.text_stream:
+                        yield ("text", text)
+                    final = await stream.get_final_message()
+                yield ("done", final)
+                return
+            except RateLimitError as exc:
+                if attempt == 1:
+                    raise  # second attempt also failed — propagate
+                # Parse Retry-After if available, otherwise wait 60 s.
+                retry_after = 60
+                if hasattr(exc, "response") and exc.response is not None:
+                    header = exc.response.headers.get("retry-after")
+                    if header and header.isdigit():
+                        retry_after = int(header)
+                yield ("rate_limited", retry_after)
+                await asyncio.sleep(retry_after)
 
     async def complete(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict],
         system: str,
         *,
         max_tokens: int = 1024,

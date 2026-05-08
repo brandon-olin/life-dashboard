@@ -11,6 +11,7 @@ import {
   ShoppingCart,
   Dumbbell,
   Settings,
+  Bot,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 

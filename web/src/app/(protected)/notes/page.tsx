@@ -1,42 +1,166 @@
 "use client";
 
-import { BookOpen, Plus, Tag } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useState, useCallback } from "react";
+import { NoteList } from "@/components/notes/note-list";
+import { NoteEditor } from "@/components/notes/note-editor";
+import { NoteGraph } from "@/components/notes/note-graph";
+import { useResizablePanel } from "@/lib/hooks/use-resizable-panel";
+import { BookOpen, Network, List } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { components } from "@/lib/api/schema";
+
+type NoteSummary = components["schemas"]["NoteSummary"];
+type View = "list" | "graph";
+
+/** Sentinel value: user clicked "New note" but hasn't saved yet */
+const NEW_NOTE_ID = "__new__";
 
 export default function NotesPage() {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [view, setView] = useState<View>("list");
+
+  const { width, startResize } = useResizablePanel({
+    defaultWidth: 260,
+    minWidth: 180,
+    maxWidth: 400,
+    storageKey: "ld-notes-list-width",
+  });
+
+  const handleSelect = useCallback((note: NoteSummary) => {
+    setSelectedId(note.id);
+    setView("list"); // graph click → jump to list+editor
+  }, []);
+
+  const handleGraphSelect = useCallback((id: string) => {
+    setSelectedId(id);
+    // Keep graph view open, just highlight the node
+  }, []);
+
+  const handleNewNote = useCallback(() => {
+    setSelectedId(NEW_NOTE_ID);
+    setView("list");
+  }, []);
+
+  const handleCreated = useCallback((note: NoteSummary) => {
+    setSelectedId(note.id);
+  }, []);
+
+  const handleDeleted = useCallback(() => {
+    setSelectedId(null);
+  }, []);
+
+  const handleNavigate = useCallback((id: string) => {
+    setSelectedId(id);
+  }, []);
+
+  const isNew = selectedId === NEW_NOTE_ID;
+  const editorNoteId = isNew ? null : selectedId;
+
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
-        <div className="flex items-center gap-2">
-          <BookOpen className="h-5 w-5 text-muted-foreground" />
-          <h1 className="text-lg font-semibold">Notes</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground" disabled>
-            <Tag className="h-4 w-4" />
-            Tags
-          </Button>
-          <Button size="sm" className="gap-2" disabled>
-            <Plus className="h-4 w-4" />
-            New note
-          </Button>
+    <div className="flex flex-col h-full min-h-full">
+
+      {/* ── View toggle bar ─────────────────────────────────────── */}
+      <div className="flex items-center gap-1 px-3 py-1.5 border-b shrink-0 bg-background">
+        <div className="flex rounded-md overflow-hidden border text-xs">
+          <button
+            type="button"
+            onClick={() => setView("list")}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1 transition-colors",
+              view === "list"
+                ? "bg-foreground text-background"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+            )}
+          >
+            <List className="h-3 w-3" />
+            List
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("graph")}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1 transition-colors border-l",
+              view === "graph"
+                ? "bg-foreground text-background"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+            )}
+          >
+            <Network className="h-3 w-3" />
+            Graph
+          </button>
         </div>
       </div>
 
-      {/* Empty state */}
-      <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center px-6">
-        <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
-          <BookOpen className="h-6 w-6 text-muted-foreground" />
-        </div>
-        <div>
-          <p className="font-medium mb-1">Zettelkasten notes</p>
-          <p className="text-sm text-muted-foreground max-w-sm">
-            Atomic, interlinked notes with tags and{" "}
-            <code className="text-xs bg-muted px-1 py-0.5 rounded">[[wikilink]]</code>{" "}
-            backlinks. The full UI is coming soon — the data model and API are ready.
-          </p>
-        </div>
+      {/* ── Main content ─────────────────────────────────────────── */}
+      <div className="flex flex-1 min-h-0">
+
+        {view === "list" ? (
+          <>
+            {/* Note list sidebar */}
+            <aside
+              className="shrink-0 border-r flex flex-col overflow-hidden bg-background"
+              style={{ width }}
+            >
+              <NoteList
+                selectedId={isNew ? null : selectedId}
+                onSelect={handleSelect}
+                onNewNote={handleNewNote}
+                onAllDeleted={() => setSelectedId(null)}
+              />
+            </aside>
+
+            {/* Resize handle */}
+            <div
+              className="w-1 shrink-0 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors"
+              onMouseDown={startResize}
+            />
+
+            {/* Editor pane */}
+            <main className="flex-1 min-w-0 overflow-auto">
+              {selectedId === null ? (
+                <div className="flex flex-col items-center justify-center h-full text-center px-6 text-muted-foreground">
+                  <BookOpen className="h-10 w-10 mb-3 opacity-30" />
+                  <p className="text-sm">Select a note or create one.</p>
+                </div>
+              ) : (
+                <NoteEditor
+                  key={selectedId}
+                  noteId={editorNoteId}
+                  onCreated={handleCreated}
+                  onDeleted={handleDeleted}
+                  onNavigate={handleNavigate}
+                />
+              )}
+            </main>
+          </>
+        ) : (
+          /* ── Graph view ──────────────────────────────────────── */
+          <div className="flex flex-1 min-h-0 min-w-0">
+            {/* Graph canvas */}
+            <div className="flex-1 min-w-0 min-h-0 relative overflow-hidden">
+              <NoteGraph
+                selectedId={selectedId}
+                onSelect={handleGraphSelect}
+              />
+            </div>
+
+            {/* Editor side-panel — slides in when a node is selected */}
+            {selectedId && !isNew && (
+              <>
+                <div className="w-px bg-border shrink-0" />
+                <div className="w-[380px] shrink-0 overflow-auto border-l">
+                  <NoteEditor
+                    key={selectedId}
+                    noteId={selectedId}
+                    onCreated={handleCreated}
+                    onDeleted={() => { setSelectedId(null); }}
+                    onNavigate={(id) => { setSelectedId(id); }}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
