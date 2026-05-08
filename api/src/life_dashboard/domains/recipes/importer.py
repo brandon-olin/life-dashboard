@@ -237,6 +237,29 @@ def _strip_html(text: str) -> str:
     return _HTML_ENTITIES.sub(replace_entity, text).strip()
 
 
+# ── Image extraction ─────────────────────────────────────────────────────────
+
+def _extract_image_url(raw) -> str | None:
+    """
+    Schema.org `image` can be:
+    - a string URL
+    - an ImageObject dict with "url" or "contentUrl"
+    - a list of any of the above (we use the first)
+    """
+    if not raw:
+        return None
+    if isinstance(raw, list):
+        raw = raw[0] if raw else None
+    if not raw:
+        return None
+    if isinstance(raw, str):
+        return raw.strip() or None
+    if isinstance(raw, dict):
+        url = raw.get("url") or raw.get("contentUrl") or ""
+        return str(url).strip() or None
+    return None
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 class RecipeImportError(Exception):
@@ -316,9 +339,12 @@ async def fetch_recipe_preview(url: str) -> RecipeCreate:
     raw_steps = recipe.get("recipeInstructions") or []
     steps = _parse_steps(raw_steps)
 
+    cover_image_url = _extract_image_url(recipe.get("image"))
+
     return RecipeCreate(
         name=name,
         description=description,
+        cover_image_url=cover_image_url,
         source_url=url,
         prep_time_minutes=prep_time,
         cook_time_minutes=cook_time,

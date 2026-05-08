@@ -37,6 +37,7 @@ class RecipeCreate(BaseModel):
     goal_id: uuid.UUID | None = None
     name: str = Field(min_length=1, max_length=500)
     description: str | None = None
+    cover_image_url: str | None = None
     source_url: str | None = None
     prep_time_minutes: int | None = Field(default=None, ge=0)
     cook_time_minutes: int | None = Field(default=None, ge=0)
@@ -51,6 +52,7 @@ class RecipeUpdate(BaseModel):
     goal_id: uuid.UUID | None = None
     name: str | None = Field(default=None, min_length=1, max_length=500)
     description: str | None = None
+    cover_image_url: str | None = None
     source_url: str | None = None
     prep_time_minutes: int | None = Field(default=None, ge=0)
     cook_time_minutes: int | None = Field(default=None, ge=0)
@@ -70,6 +72,7 @@ class RecipeResponse(BaseModel):
     goal_id: uuid.UUID | None
     name: str
     description: str | None
+    cover_image_url: str | None
     source_url: str | None
     prep_time_minutes: int | None
     cook_time_minutes: int | None

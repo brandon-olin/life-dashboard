@@ -27,26 +27,38 @@ function RecipeCard({ recipe, onClick }: { recipe: Recipe; onClick: () => void }
     <button
       type="button"
       onClick={onClick}
-      className="w-full text-left border rounded-lg p-4 bg-card hover:bg-muted/30 transition-colors cursor-pointer group"
+      className="w-full text-left border rounded-lg bg-card hover:bg-muted/30 transition-colors cursor-pointer group overflow-hidden"
     >
-      <div className="flex items-start gap-2">
-        <span className="font-medium text-sm leading-snug">{recipe.name}</span>
-      </div>
-      {recipe.description && (
-        <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{recipe.description}</p>
+      {/* Cover image — full-width banner when present */}
+      {recipe.cover_image_url && (
+        <div className="w-full h-36 overflow-hidden">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={recipe.cover_image_url}
+            alt={recipe.name}
+            className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
+          />
+        </div>
       )}
-      <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-        {timeStr && (
-          <span className="flex items-center gap-1">
-            <Clock className="h-3 w-3" />{timeStr}
-          </span>
+
+      <div className="p-4">
+        <span className="font-medium text-sm leading-snug">{recipe.name}</span>
+        {recipe.description && (
+          <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{recipe.description}</p>
         )}
-        {recipe.servings && <span>{recipe.servings} servings</span>}
-        {(recipe.ingredients.length > 0 || recipe.steps.length > 0) && (
-          <span className="text-muted-foreground/60">
-            {recipe.ingredients.length} ing · {recipe.steps.length} steps
-          </span>
-        )}
+        <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+          {timeStr && (
+            <span className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />{timeStr}
+            </span>
+          )}
+          {recipe.servings && <span>{recipe.servings} servings</span>}
+          {(recipe.ingredients.length > 0 || recipe.steps.length > 0) && (
+            <span className="text-muted-foreground/60">
+              {recipe.ingredients.length} ing · {recipe.steps.length} steps
+            </span>
+          )}
+        </div>
       </div>
     </button>
   );

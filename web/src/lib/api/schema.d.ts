@@ -1780,6 +1780,8 @@ export interface components {
             name: string;
             /** Description */
             description?: string | null;
+            /** Cover Image Url */
+            cover_image_url?: string | null;
             /** Source Url */
             source_url?: string | null;
             /** Prep Time Minutes */
@@ -1834,6 +1836,8 @@ export interface components {
             name: string;
             /** Description */
             description: string | null;
+            /** Cover Image Url */
+            cover_image_url: string | null;
             /** Source Url */
             source_url: string | null;
             /** Prep Time Minutes */
@@ -1880,6 +1884,8 @@ export interface components {
             name?: string | null;
             /** Description */
             description?: string | null;
+            /** Cover Image Url */
+            cover_image_url?: string | null;
             /** Source Url */
             source_url?: string | null;
             /** Prep Time Minutes */

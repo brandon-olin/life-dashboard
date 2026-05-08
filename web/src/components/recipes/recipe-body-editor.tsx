@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { $api } from "@/lib/api/query";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/shadcn";
+import { uploadImageFile } from "@/lib/api/upload";
 import { Check, Loader2 } from "lucide-react";
 import type { Block } from "@blocknote/core";
 import { useThemeCustomizer } from "@/lib/theme/context";
@@ -33,7 +34,7 @@ function EditorInner({
   const activeBase = BASE_THEMES.find((t) => t.id === config.baseThemeId);
   const bnTheme: "light" | "dark" = activeBase?.category === "dark" ? "dark" : "light";
 
-  const editor = useCreateBlockNote();
+  const editor = useCreateBlockNote({ uploadFile: uploadImageFile });
 
   // Populate editor once from initialBody
   const initialised = useRef(false);

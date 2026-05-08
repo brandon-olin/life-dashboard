@@ -27,7 +27,7 @@ import JSZip from "jszip";
 import { BlockNoteEditor, type Block } from "@blocknote/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { getAccessToken } from "@/lib/auth/token";
-import { Upload, Loader2, CheckCircle2, AlertCircle, X } from "lucide-react";
+import { Upload, Loader2, CheckCircle2, AlertCircle, X, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -489,6 +489,29 @@ function flattenEmptyContentBlocks(blocks: Block[]): Block[] {
   return result;
 }
 
+/**
+ * Writes `localStorage.setItem("toggle-${id}", "false")` for every toggle
+ * block in the tree so that the editor's preOpenToggleBlocks helper — which
+ * only sets keys that are missing — leaves them collapsed on first open.
+ *
+ * This mirrors the same key format used in document-editor.tsx and must stay
+ * in sync if that key format ever changes.
+ */
+function collapseAllToggles(blocks: Block[]): void {
+  for (const block of blocks) {
+    const isToggle =
+      block.type === "toggleListItem" ||
+      (block.type === "heading" &&
+        (block.props as Record<string, unknown>).isToggleable === true);
+    if (isToggle) {
+      localStorage.setItem(`toggle-${block.id}`, "false");
+    }
+    if (block.children?.length) {
+      collapseAllToggles(block.children as Block[]);
+    }
+  }
+}
+
 // Singleton parser editor — created lazily, reused across all pages.
 // BlockNoteEditor.create() is safe to call in the browser without mounting.
 let _parseEditor: BlockNoteEditor | null = null;
@@ -522,6 +545,9 @@ async function parseHtmlPage(
   // <div class="indented"> / <p>-in-li constructs. These have empty inline
   // content arrays but non-empty children and cause a hard error when loaded.
   const blocks = flattenEmptyContentBlocks(rawBlocks);
+  // Pre-write collapsed state to localStorage so imported toggles open collapsed
+  // on first view (preOpenToggleBlocks in document-editor only sets missing keys).
+  collapseAllToggles(blocks);
   return { editorJson: { blocks }, icon };
 }
 
@@ -790,6 +816,51 @@ async function parseNotionZip(file: File): Promise<ParsedPage[]> {
   return [...stubPages, ...pages];
 }
 
+// ── Platform configs ──────────────────────────────────────────────────────────
+
+type Platform = "notion" | "obsidian" | "bear" | "logseq" | "generic";
+
+interface PlatformConfig {
+  id: Platform;
+  name: string;
+  emoji: string;
+  /** One-line export hint shown above the drop zone. */
+  tip: string;
+}
+
+const PLATFORMS: PlatformConfig[] = [
+  {
+    id: "notion",
+    name: "Notion",
+    emoji: "📝",
+    tip: 'Settings → Export content → "HTML". Preserves toggles and icons — Markdown exports lose toggle blocks.',
+  },
+  {
+    id: "obsidian",
+    name: "Obsidian",
+    emoji: "💎",
+    tip: "Zip your vault folder and upload it here. All markdown files and subfolders are imported.",
+  },
+  {
+    id: "bear",
+    name: "Bear",
+    emoji: "🐻",
+    tip: "File → Export Notes → Markdown, then zip the exported folder.",
+  },
+  {
+    id: "logseq",
+    name: "Logseq",
+    emoji: "🔗",
+    tip: '... menu → Export graph → "Export as standard Markdown", then zip the output.',
+  },
+  {
+    id: "generic",
+    name: "Other",
+    emoji: "📁",
+    tip: "Any zip of .md or .html files. Folder structure becomes page hierarchy.",
+  },
+];
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -799,7 +870,10 @@ interface Props {
 export function NotionImportDialog({ onClose }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<ImportState>({ phase: "idle" });
+  const [platform, setPlatform] = useState<Platform | null>(null);
   const qc = useQueryClient();
+
+  const selectedPlatform = PLATFORMS.find((p) => p.id === platform);
 
   async function handleFile(file: File) {
     if (!file.name.toLowerCase().endsWith(".zip")) {
@@ -934,6 +1008,10 @@ export function NotionImportDialog({ onClose }: Props) {
     state.phase === "uploading" ||
     state.phase === "rewriting";
 
+  const showPicker = state.phase === "idle" && platform === null;
+  const showUpload =
+    (state.phase === "idle" || state.phase === "error") && platform !== null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div
@@ -942,7 +1020,26 @@ export function NotionImportDialog({ onClose }: Props) {
       >
         {/* Header */}
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold">Import pages</h2>
+          <div className="flex items-center gap-1">
+            {platform !== null && !isWorking && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPlatform(null);
+                  setState({ phase: "idle" });
+                }}
+                className="text-muted-foreground hover:text-foreground p-1 rounded -ml-1"
+                aria-label="Back to platform picker"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+            )}
+            <h2 className="text-base font-semibold">
+              {selectedPlatform
+                ? `Import from ${selectedPlatform.name}`
+                : "Import pages"}
+            </h2>
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -953,29 +1050,53 @@ export function NotionImportDialog({ onClose }: Props) {
           </button>
         </div>
 
-        {/* Instructions */}
-        {state.phase === "idle" && (
-          <div className="text-sm text-muted-foreground space-y-2">
-            <p>
-              Upload a zip of pages. Hierarchy is inferred from folder structure.
+        {/* Step 1 — Platform picker */}
+        {showPicker && (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-muted-foreground">
+              Where are you importing from?
             </p>
-            <div className="rounded-md bg-muted/60 px-3 py-2 text-xs space-y-0.5">
-              <p className="font-medium text-foreground">Notion users:</p>
-              <p>Export as <span className="font-medium text-foreground">HTML</span> (not &ldquo;Markdown &amp; CSV&rdquo;) to preserve toggle lists and page icons. Markdown exports convert toggles to plain bullet points.</p>
+            <div className="grid grid-cols-2 gap-2">
+              {PLATFORMS.slice(0, 4).map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setPlatform(p.id)}
+                  className="flex items-center gap-3 rounded-lg border border-border px-3 py-3 text-sm text-left hover:bg-muted/60 hover:border-primary/40 transition-colors"
+                >
+                  <span className="text-xl leading-none">{p.emoji}</span>
+                  <span className="font-medium">{p.name}</span>
+                </button>
+              ))}
             </div>
-            <ul className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs pl-1">
-              <li>• Notion <span className="text-muted-foreground/60">(HTML export)</span></li>
-              <li>• Obsidian</li>
-              <li>• Logseq</li>
-              <li>• Bear</li>
-              <li>• Craft</li>
-              <li>• Any markdown zip</li>
-            </ul>
+            <button
+              type="button"
+              onClick={() => setPlatform("generic")}
+              className="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-sm text-left hover:bg-muted/60 hover:border-primary/40 transition-colors"
+            >
+              <span className="text-xl leading-none">
+                {PLATFORMS[4].emoji}
+              </span>
+              <div>
+                <span className="font-medium">{PLATFORMS[4].name}</span>
+                <span className="text-muted-foreground ml-1.5 text-xs">
+                  any markdown or HTML zip
+                </span>
+              </div>
+            </button>
           </div>
         )}
 
-        {/* Drop zone */}
-        {(state.phase === "idle" || state.phase === "error") && (
+        {/* Step 2 — Export hint */}
+        {showUpload && selectedPlatform && (
+          <div className="rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">How to export: </span>
+            {selectedPlatform.tip}
+          </div>
+        )}
+
+        {/* Step 2 — Drop zone */}
+        {showUpload && (
           <div
             className="border-2 border-dashed border-border rounded-lg p-8 flex flex-col items-center gap-3 cursor-pointer hover:border-primary/50 transition-colors"
             onClick={() => inputRef.current?.click()}

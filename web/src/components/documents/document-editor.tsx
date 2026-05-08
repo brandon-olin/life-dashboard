@@ -9,6 +9,7 @@ import { $api } from "@/lib/api/query";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/shadcn";
 import { DocumentSideMenuController } from "./document-side-menu";
+import { uploadImageFile } from "@/lib/api/upload";
 import { Loader2, Check } from "lucide-react";
 import type { Block } from "@blocknote/core";
 import "@blocknote/core/fonts/inter.css";
@@ -68,7 +69,7 @@ function EditorInner({ documentId }: { documentId: string }) {
   );
 
   // Initialise editor (empty for now; we'll replace content once data arrives)
-  const editor = useCreateBlockNote();
+  const editor = useCreateBlockNote({ uploadFile: uploadImageFile });
 
   // Once data loads, populate title and editor content.
   const initialised = useRef(false);

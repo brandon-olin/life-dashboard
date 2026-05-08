@@ -30,7 +30,20 @@ function RecipeHeader({ recipe, onEdit }: { recipe: Recipe; onEdit: () => void }
   const timeStr = formatTime(totalMins || null);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
+      {/* Cover image */}
+      {recipe.cover_image_url && (
+        <div className="w-full rounded-xl overflow-hidden" style={{ maxHeight: "320px" }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={recipe.cover_image_url}
+            alt={recipe.name}
+            className="w-full h-full object-cover"
+            style={{ maxHeight: "320px" }}
+          />
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-4">
         <h1 className="text-2xl font-semibold leading-tight">{recipe.name}</h1>
         <div className="flex items-center gap-2 shrink-0">

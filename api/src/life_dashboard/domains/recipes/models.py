@@ -26,6 +26,7 @@ class Recipe(Base):
 
     name: Mapped[str] = mapped_column(String(500))
     description: Mapped[str | None] = mapped_column(Text)
+    cover_image_url: Mapped[str | None] = mapped_column(Text)
     source_url: Mapped[str | None] = mapped_column(Text)
     prep_time_minutes: Mapped[int | None] = mapped_column(Integer)
     cook_time_minutes: Mapped[int | None] = mapped_column(Integer)
