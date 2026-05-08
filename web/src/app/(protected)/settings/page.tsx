@@ -12,8 +12,14 @@ import {
   Trash2,
   X,
   ChevronDown,
+  Bot,
+  Check,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { getAccessToken } from "@/lib/auth/token";
 import { useThemeCustomizer } from "@/lib/theme/context";
 import {
   BASE_THEMES,
@@ -33,12 +39,13 @@ import {
 
 // ── Left nav ──────────────────────────────────────────────────────────────────
 
-type Section = "appearance" | "account" | "household";
+type Section = "appearance" | "account" | "household" | "ai";
 
 const SECTIONS: { id: Section; label: string; icon: React.ElementType }[] = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "account",    label: "Account",    icon: User    },
   { id: "household",  label: "Household",  icon: Home    },
+  { id: "ai",         label: "AI",         icon: Bot     },
 ];
 
 function SettingsNav({
@@ -974,6 +981,315 @@ function HouseholdSection() {
   );
 }
 
+// ── AI section ───────────────────────────────────────────────────────────────
+
+type AiSettings = {
+  provider: "anthropic" | "openai" | "ollama";
+  retention_days: number | null;
+  has_custom_key: boolean;
+};
+
+const PROVIDER_OPTIONS: { value: AiSettings["provider"]; label: string; placeholder: string }[] = [
+  { value: "anthropic", label: "Anthropic (Claude)",  placeholder: "sk-ant-api03-…" },
+  { value: "openai",    label: "OpenAI",              placeholder: "sk-…"           },
+  { value: "ollama",    label: "Ollama (local)",       placeholder: "http://localhost:11434" },
+];
+
+const RETENTION_OPTIONS: { value: number | null; label: string }[] = [
+  { value: 30,   label: "30 days"     },
+  { value: 60,   label: "60 days"     },
+  { value: 90,   label: "90 days"     },
+  { value: 180,  label: "6 months"    },
+  { value: 365,  label: "1 year"      },
+  { value: null, label: "Keep forever"},
+];
+
+async function fetchAiSettings(): Promise<AiSettings> {
+  const token = getAccessToken();
+  const res = await fetch("/api/ai/settings", {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error("Failed to load AI settings");
+  return res.json() as Promise<AiSettings>;
+}
+
+async function patchAiSettings(patch: Record<string, unknown>): Promise<AiSettings> {
+  const token = getAccessToken();
+  const res = await fetch("/api/ai/settings", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || "Failed to save AI settings");
+  }
+  return res.json() as Promise<AiSettings>;
+}
+
+function AiSection() {
+  const qc = useQueryClient();
+  const { data: settings, isLoading, isError } = useQuery<AiSettings>({
+    queryKey: ["ai", "settings"],
+    queryFn: fetchAiSettings,
+  });
+
+  // Key editing state
+  const [keyInput, setKeyInput]     = useState("");
+  const [showKey, setShowKey]       = useState(false);
+  const [editingKey, setEditingKey] = useState(false);
+  const [keyError, setKeyError]     = useState<string | null>(null);
+  const [keySaving, setKeySaving]   = useState(false);
+
+  // Generic saving indicator (provider, retention)
+  const [saving, setSaving] = useState(false);
+
+  async function save(patch: Record<string, unknown>) {
+    setSaving(true);
+    try {
+      await patchAiSettings(patch);
+      await qc.invalidateQueries({ queryKey: ["ai", "settings"] });
+    } catch {
+      // Surface silently for now — individual fields can add error handling later
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveKey() {
+    const trimmed = keyInput.trim();
+    if (!trimmed) return;
+    setKeySaving(true);
+    setKeyError(null);
+    try {
+      await patchAiSettings({ api_key: trimmed });
+      await qc.invalidateQueries({ queryKey: ["ai", "settings"] });
+      setKeyInput("");
+      setEditingKey(false);
+    } catch (e) {
+      setKeyError(e instanceof Error ? e.message : "Failed to save. Please try again.");
+    } finally {
+      setKeySaving(false);
+    }
+  }
+
+  async function removeKey() {
+    setSaving(true);
+    try {
+      await patchAiSettings({ clear_api_key: true });
+      await qc.invalidateQueries({ queryKey: ["ai", "settings"] });
+      setEditingKey(false);
+      setKeyInput("");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="space-y-5">
+        <SectionTitle>AI</SectionTitle>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-8">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading…
+        </div>
+      </div>
+    );
+  }
+
+  if (isError || !settings) {
+    return (
+      <div className="space-y-5">
+        <SectionTitle>AI</SectionTitle>
+        <div className="flex items-center gap-2 text-sm text-destructive py-4">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          Failed to load AI settings. Reload the page to try again.
+        </div>
+      </div>
+    );
+  }
+
+  const providerMeta = PROVIDER_OPTIONS.find((p) => p.value === settings.provider)!;
+  const isOllama     = settings.provider === "ollama";
+  const keyLabel     = isOllama ? "Server URL" : "API key";
+
+  const showKeyForm  = !settings.has_custom_key || editingKey;
+
+  return (
+    <div className="space-y-5">
+      <SectionTitle>AI</SectionTitle>
+
+      {/* ── Provider ── */}
+      <SubSection title="Provider">
+        <div className="flex flex-col gap-2">
+          {PROVIDER_OPTIONS.map((opt) => {
+            const active = settings.provider === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                disabled={saving}
+                onClick={() => !active && save({ provider: opt.value })}
+                className={cn(
+                  "flex items-center gap-3 px-4 py-3 rounded-lg border-2 text-left transition-all cursor-pointer disabled:cursor-default",
+                  active
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-muted-foreground/40 hover:bg-muted/30",
+                )}
+              >
+                <span
+                  className={cn(
+                    "h-4 w-4 rounded-full border-2 shrink-0 flex items-center justify-center",
+                    active ? "border-primary" : "border-muted-foreground/40",
+                  )}
+                >
+                  {active && <span className="h-2 w-2 rounded-full bg-primary" />}
+                </span>
+                <span className={cn("text-sm font-medium", active ? "text-foreground" : "text-muted-foreground")}>
+                  {opt.label}
+                </span>
+                {opt.value === "ollama" && (
+                  <span className="ml-auto text-[10px] font-medium uppercase tracking-wide text-muted-foreground border rounded px-1.5 py-0.5">
+                    Self-hosted
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        {saving && (
+          <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1.5">
+            <Loader2 className="h-3 w-3 animate-spin" /> Saving…
+          </p>
+        )}
+      </SubSection>
+
+      {/* ── API Key / Server URL ── */}
+      <SubSection title={keyLabel}>
+        {settings.has_custom_key && !editingKey ? (
+          /* Key is saved — show status + action buttons */
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400 font-medium">
+                <Check className="h-4 w-4" />
+                {keyLabel} saved
+              </span>
+              <span className="text-muted-foreground text-sm">— stored encrypted, never displayed</span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => { setEditingKey(true); setKeyInput(""); }}
+                className="text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted transition-colors cursor-pointer"
+              >
+                Update {keyLabel.toLowerCase()}
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={removeKey}
+                className="text-xs px-3 py-1.5 rounded-md border border-destructive/40 text-destructive hover:bg-destructive/10 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* No key saved, or updating — show input */
+          <div className="space-y-3">
+            {!settings.has_custom_key && (
+              <p className="text-xs text-muted-foreground">
+                {isOllama
+                  ? "Enter the URL of your local Ollama server."
+                  : `Enter your ${providerMeta.label} API key. It will be stored encrypted and never shown again.`}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type={showKey ? "text" : "password"}
+                  value={keyInput}
+                  onChange={(e) => setKeyInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveKey(); if (e.key === "Escape") { setEditingKey(false); setKeyInput(""); }}}
+                  placeholder={providerMeta.placeholder}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="w-full text-sm font-mono bg-background border border-border rounded-md px-3 py-2 pr-9 outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey((v) => !v)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+                  aria-label={showKey ? "Hide key" : "Show key"}
+                >
+                  {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <button
+                type="button"
+                disabled={keySaving || !keyInput.trim()}
+                onClick={saveKey}
+                className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:opacity-90 transition-opacity disabled:opacity-40 cursor-pointer disabled:cursor-default shrink-0"
+              >
+                {keySaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
+              </button>
+              {editingKey && (
+                <button
+                  type="button"
+                  onClick={() => { setEditingKey(false); setKeyInput(""); setKeyError(null); }}
+                  className="px-3 py-2 text-sm rounded-md border border-border hover:bg-muted transition-colors cursor-pointer shrink-0"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+            {keyError && (
+              <p className="text-xs text-destructive flex items-center gap-1.5">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                {keyError}
+              </p>
+            )}
+          </div>
+        )}
+      </SubSection>
+
+      {/* ── Conversation history ── */}
+      <SubSection title="Conversation history">
+        <p className="text-xs text-muted-foreground mb-4">
+          Conversations older than this limit are deleted automatically. Set to{" "}
+          <em>Keep forever</em> to retain all history.
+        </p>
+        <div className="relative max-w-xs">
+          <select
+            value={settings.retention_days ?? ""}
+            disabled={saving}
+            onChange={(e) => {
+              const raw = e.target.value;
+              save({ retention_days: raw === "" ? null : Number(raw) });
+            }}
+            className="w-full text-sm bg-background border border-border rounded-md px-3 py-2 appearance-none outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary pr-8 cursor-pointer disabled:opacity-50"
+          >
+            {RETENTION_OPTIONS.map((opt) => (
+              <option key={String(opt.value)} value={opt.value ?? ""}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="h-4 w-4 absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+        </div>
+        {saving && (
+          <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1.5">
+            <Loader2 className="h-3 w-3 animate-spin" /> Saving…
+          </p>
+        )}
+      </SubSection>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -994,6 +1310,7 @@ export default function SettingsPage() {
         {active === "appearance" && <AppearanceSection />}
         {active === "account"    && <AccountSection />}
         {active === "household"  && <HouseholdSection />}
+        {active === "ai"         && <AiSection />}
       </div>
     </div>
   );

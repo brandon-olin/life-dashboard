@@ -6,8 +6,7 @@ import { $api } from "@/lib/api/query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RecipeSheet } from "@/components/recipes/recipe-sheet";
-import { cn } from "@/lib/utils";
-import { Plus, Loader2, ChefHat, Clock, ExternalLink, Search } from "lucide-react";
+import { Plus, Loader2, ChefHat, Clock, Search } from "lucide-react";
 import type { components } from "@/lib/api/schema";
 
 type Recipe = components["schemas"]["RecipeResponse"];
@@ -28,21 +27,10 @@ function RecipeCard({ recipe, onClick }: { recipe: Recipe; onClick: () => void }
     <button
       type="button"
       onClick={onClick}
-      className="w-full text-left border rounded-lg p-4 bg-card hover:bg-muted/30 transition-colors group"
+      className="w-full text-left border rounded-lg p-4 bg-card hover:bg-muted/30 transition-colors cursor-pointer group"
     >
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex items-start gap-2">
         <span className="font-medium text-sm leading-snug">{recipe.name}</span>
-        {recipe.source_url && (
-          <a
-            href={recipe.source_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="shrink-0 text-muted-foreground hover:text-foreground"
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
-        )}
       </div>
       {recipe.description && (
         <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{recipe.description}</p>

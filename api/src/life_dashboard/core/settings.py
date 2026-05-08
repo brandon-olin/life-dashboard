@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     # Set ANTHROPIC_API_KEY in .env. Leave blank to disable AI until a key is provided.
     anthropic_api_key: str = ""
 
+    # File uploads — local storage path inside the container
+    upload_dir: str = "/data/uploads"
+    max_upload_size_mb: int = 10
+
     # App
     environment: str = "development"
     log_level: str = "info"

@@ -3,7 +3,8 @@ networks:
     external: true
     name: life-dashboard
 
-volumes: {}
+volumes:
+  uploads_data:   # persists uploaded images across container rebuilds
 
 services:
   api:

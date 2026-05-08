@@ -9,26 +9,26 @@ Implementation details for everything in **Completed** live in the `CLAUDE.md` h
 Self-hosted stack is fully running (Docker on NAS + Tailscale + Caddy TLS).
 
 - **Auth** — JWT access/refresh tokens, httpOnly cookies, argon2, first-run bootstrap
-- **Shell** — responsive sidebar with drag-to-resize, command palette (⌘P), themed scrollbars
+- **Shell** — responsive sidebar with drag-to-resize, command palette (⌘P), themed scrollbars; ⌘P searches all nav items regardless of sidebar visibility
 - **Theme system** — palette presets (light + dark), per-variable CSS customization, synced to user profile
-- **Sidebar customization** — show/hide/reorder nav items, persisted to user profile
+- **Sidebar customization** — show/hide/reorder nav items, collapsible folder groups (SVG icon picker, drag-to-reorder, contents management), persisted to user profile
+- **Settings page** — left-nav shell (Appearance, Account, Household sections)
 - **Documents** — hierarchical page tree (collapse state persisted), BlockNote rich-text editor, document icons (emoji), drag-to-resize panel
-- **Notion import** — HTML + markdown zip; toggle lists, page icons, inter-page link rewriting
+- **Notion import** — HTML + markdown zip; toggle lists, page icons, inter-page link rewriting; checkbox-inside-toggle parse error nearly resolved
 - **Stub pages** — Tasks, Habits, Goals, Recipes, Grocery Lists, Workouts, Contacts, Calendar (routes + basic API domains exist, no UI built yet)
 
 ---
 
 ## In progress
 
-- **Notion import edge case** — checkbox items nested inside toggle blocks trigger a BlockNote `blockContainer` parse error; debug logging added, fix pending
+- **Notion import edge case** — checkbox items nested inside toggle blocks trigger a BlockNote `blockContainer` parse error; fix in progress in a separate thread, nearly resolved
+- **Image upload** — inline media attachments in the BlockNote editor; being built here, motivated by recipe images
 
 ---
 
 ## Near-term
 
 ### Documents
-- [ ] Fix Notion HTML import: checkbox-inside-toggle parse error
-- [ ] Image upload — inline media attachments in BlockNote editor
 - [ ] Archive/delete individual pages
 - [ ] Drag-to-reorder pages in the tree
 
@@ -39,13 +39,8 @@ Self-hosted stack is fully running (Docker on NAS + Tailscale + Caddy TLS).
 ### Calendar
 - [ ] Build out the existing stub — event creation, month/week/day views, recurrence, member assignment
 
-### Sidebar folders
-- [ ] Single-level folder grouping in sidebar nav (e.g. a "Writing" folder containing Documents, Notes, Journal links)
-- [ ] Design TBD: named sections vs collapsible folders, persistence model
-
 ### UI polish
 - [ ] Compress sidebar — search to icon-only (⌘P trigger), Ask AI + Settings to footer icon buttons
-- [ ] Settings page left-nav shell (Appearance, Account, Household sections)
 
 ---
 

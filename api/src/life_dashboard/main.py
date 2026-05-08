@@ -5,7 +5,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from life_dashboard.ai.router import router as ai_router
 from life_dashboard.auth.router import router as auth_router
+from life_dashboard.uploads.router import router as uploads_router
 from life_dashboard.domains.calendar_events.router import router as calendar_events_router
 from life_dashboard.domains.contacts.router import router as contacts_router
 from life_dashboard.domains.documents.router import router as documents_router
@@ -73,7 +75,9 @@ app.add_middleware(
 )
 
 
+app.include_router(ai_router)
 app.include_router(auth_router)
+app.include_router(uploads_router)
 app.include_router(calendar_events_router)
 app.include_router(contacts_router)
 app.include_router(documents_router)

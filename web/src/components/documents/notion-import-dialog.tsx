@@ -177,6 +177,15 @@ function unwrapNotionDivs(root: Element): void {
     while (div.firstChild) div.parentNode?.insertBefore(div.firstChild, div);
     div.remove();
   }
+
+  // 3. Notion column-layout divs (div.column-list, div.column).
+  //    These are not a BlockNote concept — unwrap them so their children become
+  //    normal top-level blocks rather than producing empty blockContainers.
+  const columnDivs = [...root.querySelectorAll("div.column-list, div.column")].reverse();
+  for (const div of columnDivs) {
+    while (div.firstChild) div.parentNode?.insertBefore(div.firstChild, div);
+    div.remove();
+  }
 }
 
 /**
@@ -267,24 +276,36 @@ function mergeSiblingLists(root: Element): void {
  * it a standalone sibling block that BlockNote can parse correctly as a
  * toggleListItem.
  *
+ * The hoist is applied in a loop until no <details> remain inside any <li>,
+ * because a single pass only moves <details> one DOM level up. When <details>
+ * blocks are deeply nested (e.g. a Recipe toggle inside a Work sub-item inside
+ * a Week toggle), multiple passes are needed to fully extract them.
+ *
  * Example (Notion "Chores:" with a nested "Completed:" toggle):
  *   Before: <li><input>Chores:<ul>…</ul><details>Completed:…</details></li>
  *   After:  <li><input>Chores:<ul>…</ul></li> [then] <details>Completed:…</details>
  */
 function hoistDetailsFromListItems(root: Element): void {
-  // Reverse so DOM mutations from later hoists don't invalidate earlier refs.
-  [...root.querySelectorAll("li > details")].reverse().forEach((details) => {
-    const li = details.parentElement;
-    if (!li) return;
-    const parentList = li.parentElement;
-    if (!parentList) return;
-    // Place the <details> after the entire parent list so it becomes a sibling
-    // block at the same level as the list, not a child inside it.
-    // BlockNote cannot reliably parse <details> as a toggleListItem when it
-    // appears as a direct child of a <li> — it produces an invalid
-    // blockContainer(blockGroup(…)) with no blockContent node, which throws.
-    parentList.after(details);
-  });
+  // Loop until no <details> remain as direct children of any <li>.
+  // A single pass with parentList.after() moves <details> one level up, but if
+  // the <li> itself was deeply nested (e.g. inside another <li> → <ul> → <li>),
+  // the hoisted <details> may still be inside an outer <li>. Repeating until
+  // stable fully extracts every <details> from all list-item ancestors.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    // Reverse so DOM mutations from later hoists don't invalidate earlier refs.
+    [...root.querySelectorAll("li > details")].reverse().forEach((details) => {
+      const li = details.parentElement;
+      if (!li) return;
+      const parentList = li.parentElement;
+      if (!parentList) return;
+      // Place the <details> after the entire parent list so it becomes a sibling
+      // block at the same level as the list, not a child inside it.
+      parentList.after(details);
+      changed = true;
+    });
+  }
 }
 
 /**
