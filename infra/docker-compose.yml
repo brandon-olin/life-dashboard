@@ -19,6 +19,8 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    volumes:
+      - uploads_data:/data/uploads
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
       interval: 30s
