@@ -210,26 +210,76 @@ function PinnedSection({
   );
 }
 
+// ── Inline markdown parser ────────────────────────────────────────────────────
+
+/**
+ * Converts **bold** and *italic* spans into React elements.
+ * Handles the most common LLM output patterns without pulling in a markdown lib.
+ */
+function parseInline(text: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  // Match **bold** before *italic* so the longer pattern wins
+  const regex = /\*\*(.+?)\*\*|\*(.+?)\*/g;
+  let last = 0;
+  let key = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > last) nodes.push(text.slice(last, match.index));
+    if (match[1] !== undefined) {
+      nodes.push(<strong key={key++} className="font-semibold">{match[1]}</strong>);
+    } else {
+      nodes.push(<em key={key++}>{match[2]}</em>);
+    }
+    last = match.index + match[0].length;
+  }
+
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+}
+
 // ── Digest display ─────────────────────────────────────────────────────────────
 
 function DigestContent({ content }: { content: string }) {
-  // Strip markdown headings — the widget header already provides title/date context,
-  // so any # / ## / ### lines the LLM adds are redundant.
+  // Strip markdown headings — the widget header already provides title/date context
   const stripped = content
     .split("\n")
     .filter((line) => !line.trimStart().startsWith("#"))
     .join("\n");
 
-  const paragraphs = stripped
-    .split(/\n{2,}/)
-    .map((p) => p.trim())
-    .filter(Boolean);
+  // Split into blocks on blank lines
+  const blocks = stripped.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
 
   return (
     <div className="space-y-3 text-sm leading-relaxed text-foreground/90">
-      {paragraphs.map((para, i) => (
-        <p key={i}>{para}</p>
-      ))}
+      {blocks.map((block, i) => {
+        const lines = block.split("\n").map((l) => l.trim()).filter(Boolean);
+
+        // Bullet list block — every line starts with - or *
+        if (lines.length > 0 && lines.every((l) => /^[-*]\s/.test(l))) {
+          return (
+            <ul key={i} className="list-disc list-inside space-y-1">
+              {lines.map((line, j) => (
+                <li key={j}>{parseInline(line.replace(/^[-*]\s+/, ""))}</li>
+              ))}
+            </ul>
+          );
+        }
+
+        // Numbered list block — every line starts with a digit and dot
+        if (lines.length > 0 && lines.every((l) => /^\d+\.\s/.test(l))) {
+          return (
+            <ol key={i} className="list-decimal list-inside space-y-1">
+              {lines.map((line, j) => (
+                <li key={j}>{parseInline(line.replace(/^\d+\.\s+/, ""))}</li>
+              ))}
+            </ol>
+          );
+        }
+
+        // Regular paragraph
+        return <p key={i}>{parseInline(block)}</p>;
+      })}
     </div>
   );
 }
